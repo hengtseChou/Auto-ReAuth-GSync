@@ -11,9 +11,11 @@ def cli():
 
 @cli.command()
 @click.argument("src", type=click.Path(exists=True))
-@click.option("-d", "--dest")
+@click.option("-d", "--dest", default=None)
 def push(src, dest):
-    pushing(src)
+    if dest is None:
+        dest = "gdrive:"
+    pushing(src, dest)
 
 
 @cli.command()

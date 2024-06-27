@@ -1,15 +1,28 @@
-import datetime
 import hashlib
 import mimetypes
 import os
-import time
 
 from pydrive2.drive import GoogleDrive
 
 from gdrive import load_authorized_gdrive
 
 
-def folder_upload(src_full_path, drive: GoogleDrive):
+def create_empty_folder(folder_name, parents_id, drive: GoogleDrive):
+
+    folder_metadata = {
+        "title": folder_name,
+        "parents": [{"id": parents_id}],
+        "mimeType": "application/vnd.google-apps.folder",
+    }
+
+    new_folder = drive.CreateFile(folder_metadata)
+    new_folder.Upload()
+    folder_id = new_folder["id"]
+
+    return folder_id
+
+
+def folder_upload(src_full_path, target_parents_id, drive: GoogleDrive):
     """Uploads folder and all it's content (if it doesnt exists)
     in root folder.
 
@@ -28,18 +41,11 @@ def folder_upload(src_full_path, drive: GoogleDrive):
         last_dir = root.split("/")[-1]
         pre_last_dir = root.split("/")[-2]
         if pre_last_dir not in parents_id.keys():
-            pre_last_dir = "root"
+            pre_last_dir = target_parents_id
         else:
             pre_last_dir = parents_id[pre_last_dir]
 
-        folder_metadata = {
-            "title": last_dir,
-            "parents": [{"id": pre_last_dir}],
-            "mimeType": "application/vnd.google-apps.folder",
-        }
-        new_folder = drive.CreateFile(folder_metadata)
-        new_folder.Upload()
-        folder_id = new_folder["id"]
+        folder_id = create_empty_folder(last_dir, pre_last_dir, drive)
 
         for name in files:
             file_metadata = {
@@ -56,7 +62,7 @@ def folder_upload(src_full_path, drive: GoogleDrive):
     return parents_id
 
 
-def check_upload(src_full_path: str, drive: GoogleDrive) -> str:
+def check_upload(src_full_path: str, dest_full_path: str, drive: GoogleDrive) -> str:
     """Checks if folder is already uploaded,
     and if it's not, uploads it.
 
@@ -67,14 +73,42 @@ def check_upload(src_full_path: str, drive: GoogleDrive) -> str:
         ID of uploaded folder, full path to this folder on computer.
 
     """
+
+    target_parents_id = "root"
+
+    if dest_full_path != "gdrive:":
+        dest_folder_list = dest_full_path.split(":")[1].split(os.path.sep)
+        dest_parents_id = []
+        for dest in dest_folder_list:
+            if not dest_parents_id:
+                items = drive.ListFile(
+                    {"q": "'root' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'"}
+                ).GetList()
+                if dest in [item["title"] for item in items]:
+                    new_folder_id = [item["id"] for item in items if item["title"] == dest][0]
+                else:
+                    new_folder_id = create_empty_folder(dest, "root", drive)
+            else:
+                items = drive.ListFile(
+                    {
+                        "q": f"'{dest_parents_id[-1]}' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'"
+                    }
+                ).GetList()
+                if dest in [item["title"] for item in items]:
+                    new_folder_id = [item["id"] for item in items if item["title"] == dest][0]
+                else:
+                    new_folder_id = create_empty_folder(dest, dest_parents_id[-1], drive)
+            dest_parents_id.append(new_folder_id)
+        target_parents_id = dest_parents_id[-1]
+
     folder_name = src_full_path.split(os.path.sep)[-1]
     items = drive.ListFile(
-        {"q": "'root' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'"}
+        {"q": f"'{target_parents_id}' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'"}
     ).GetList()
     if folder_name in [item["title"] for item in items]:
         folder_id = [item["id"] for item in items if item["title"] == folder_name][0]
     else:
-        parents_id = folder_upload(src_full_path, drive)
+        parents_id = folder_upload(src_full_path, target_parents_id, drive)
         folder_id = parents_id[folder_name]
 
     return folder_id
@@ -123,7 +157,11 @@ def by_lines(input_str):
     return input_str.count(os.path.sep)
 
 
-def push(src_full_path):
+def check_valid_dest_path(dest_full_path):
+    pass
+
+
+def push(src_full_path, dest_full_path):
     """Syncronizes computer folder with Google Drive folder.
 
     Checks files if they exist, uploads new files and subfolders,
@@ -133,7 +171,7 @@ def push(src_full_path):
 
     # Get id of Google Drive folder and it's path (from other script)
     # folder_id, full_path = initial_upload.check_upload(service)
-    folder_id = check_upload(src_full_path, drive)
+    folder_id = check_upload(src_full_path, dest_full_path, drive)
     folder_name = src_full_path.split(os.path.sep)[-1]
     tree_list = []
     root = ""
@@ -216,22 +254,16 @@ def push(src_full_path):
         # Check files that exist both on Drive and on PC
         for drive_file in refresh_files:
             file_dir = os.path.join(variable, drive_file["title"])
-            file_time = os.path.getmtime(file_dir)
-            mtime = [f["modifiedDate"] for f in items if f["title"] == drive_file["title"]][0]
-            mtime = datetime.datetime.strptime(mtime[:-2], "%Y-%m-%dT%H:%M:%S.%f")
-            drive_time = time.mktime(mtime.timetuple())
 
+            drive_md5 = drive_file["md5Checksum"]
             os_file_md5 = hashlib.md5(open(file_dir, "rb").read()).hexdigest()
-            if "md5Checksum" in drive_file.keys():
-                drive_md5 = drive_file["md5Checksum"]
-            else:
-                drive_md5 = None
 
-            if (file_time > drive_time) or (drive_md5 != os_file_md5):
+            if drive_md5 != os_file_md5:
                 file_id = [f["id"] for f in items if f["title"] == drive_file["title"]][0]
                 file_mime = [f["mimeType"] for f in items if f["title"] == drive_file["title"]][0]
 
                 file_metadata = {
+                    "id": file_id,
                     "title": drive_file["title"],
                     "parents": [{"id": parents_id[last_dir]}],
                     "mimeType": file_mime,
@@ -239,6 +271,7 @@ def push(src_full_path):
                 file_update = drive.CreateFile(file_metadata)
                 file_update.SetContentFile(file_dir)
                 file_update.Upload()
+                print(f"update file {drive_file['title']}")
 
         # Remove old files from Drive
         for drive_file in remove_files:
@@ -260,9 +293,9 @@ def push(src_full_path):
                 "mimeType": filemime,
             }
 
-            new_upload = drive.CreateFile(file_metadata)
-            new_upload.SetContentFile(file_dir)
-            new_upload.Upload()
+            file_upload = drive.CreateFile(file_metadata)
+            file_upload.SetContentFile(file_dir)
+            file_upload.Upload()
 
     remove_folders = sorted(remove_folders, key=by_lines, reverse=True)
 
