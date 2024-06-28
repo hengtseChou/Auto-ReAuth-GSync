@@ -1,107 +1,63 @@
-def folder_upload(service):
-    '''Uploads folder and all it's content (if it doesnt exists)
-    in root folder.
+import hashlib
+import os
+import shutil
 
-    Args:
-        items: List of folders in root path on Google Drive.
-        service: Google Drive service instance.
+from click import BadParameter
+from pydrive2.drive import GoogleDrive
 
-    Returns:
-        Dictionary, where keys are folder's names
-        and values are id's of these folders.
-    '''
+from gdrive import load_authorized_gdrive
 
-    parents_id = {}
+GOOGLE_MIME_TYPES = {
+    "application/vnd.google-apps.document": [
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".docx",
+    ],
+    # 'application/vnd.google-apps.document':
+    # 'application/vnd.oasis.opendocument.text',
+    "application/vnd.google-apps.spreadsheet": [
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".xlsx",
+    ],
+    # 'application/vnd.oasis.opendocument.spreadsheet',
+    "application/vnd.google-apps.presentation": [
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ".pptx",
+    ],
+    # 'application/vnd.oasis.opendocument.presentation'
+}
 
-    for root, _, files in os.walk(FULL_PATH, topdown=True):
-        last_dir = root.split('/')[-1]
-        pre_last_dir = root.split('/')[-2]
-        if pre_last_dir not in parents_id.keys():
-            pre_last_dir = []
+
+def get_target_folder_id(src_full_path: str, drive: GoogleDrive) -> str:
+
+    if src_full_path == "gdrive:":
+        return "root"
+
+    src_folder_list = src_full_path.split(":")[1].rstrip("/").split("/")
+    src_parents_id = []
+    for src in src_folder_list:
+        if not src_parents_id:
+            items = drive.ListFile(
+                {"q": "'root' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'"}
+            ).GetList()
+            if src in [item["title"] for item in items]:
+                new_folder_id = [item["id"] for item in items if item["title"] == src][0]
+            else:
+                return None
         else:
-            pre_last_dir = parents_id[pre_last_dir]
-
-        folder_metadata = {'name': last_dir,
-                           'parents': [pre_last_dir],
-                           'mimeType': 'application/vnd.google-apps.folder'}
-        create_folder = service.files().create(body=folder_metadata,
-                                               fields='id').execute()
-        folder_id = create_folder.get('id', [])
-
-        for name in files:
-            file_metadata = {'name': name, 'parents': [folder_id]}
-            media = MediaFileUpload(
-                os.path.join(root, name),
-                mimetype=mimetypes.MimeTypes().guess_type(name)[0])
-            service.files().create(body=file_metadata,
-                                   media_body=media,
-                                   fields='id').execute()
-
-        parents_id[last_dir] = folder_id
-
-    return parents_id
+            items = drive.ListFile(
+                {
+                    "q": f"'{src_parents_id[-1]}' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'"
+                }
+            ).GetList()
+            if src in [item["title"] for item in items]:
+                new_folder_id = [item["id"] for item in items if item["title"] == src][0]
+            else:
+                return None
+        src_parents_id.append(new_folder_id)
+    return src_parents_id[-1]
 
 
-def check_upload(service):
-    """Checks if folder is already uploaded,
-    and if it's not, uploads it.
-
-    Args:
-        service: Google Drive service instance.
-
-    Returns:
-        ID of uploaded folder, full path to this folder on computer.
-
-    """
-
-    results = service.files().list(
-        pageSize=100,
-        q="'root' in parents and trashed != True and \
-        mimeType='application/vnd.google-apps.folder'").execute()
-
-    items = results.get('files', [])
-
-    # Check if folder exists, and then create it or get this folder's id.
-    if DIR_NAME in [item['name'] for item in items]:
-        folder_id = [item['id']for item in items
-                     if item['name'] == DIR_NAME][0]
-    else:
-        parents_id = folder_upload(service)
-        folder_id = parents_id[DIR_NAME]
-
-    return folder_id, FULL_PATH
-
-
-def get_credentials():
-    """Gets valid user credentials from storage.
-
-    If nothing has been stored, or if the stored credentials are invalid,
-    the OAuth2 flow is completed to obtain the new credentials.
-
-    Returns:
-        Credentials, the obtained credential.
-    """
-    home_dir = os.path.expanduser('~')
-    credential_dir = os.path.join(home_dir, '.credentials')
-    if not os.path.exists(credential_dir):
-        os.makedirs(credential_dir)
-    credential_path = os.path.join(credential_dir,
-                                   'drive-python-sync.json')
-
-    store = Storage(credential_path)
-    credentials = store.get()
-    if not credentials or credentials.invalid:
-        flow = client.flow_from_clientsecrets(CLIENT_SECRET_FILE, SCOPES)
-        flow.user_agent = APPLICATION_NAME
-        # if flags:
-        credentials = tools.run_flow(flow, store, flags=None)
-        # else:  # Needed only for compatibility with Python 2.6
-        # credentials = tools.run(flow, store)
-        print('Storing credentials to ', credential_path)
-    return credentials
-
-
-def get_tree(folder_name, tree_list, root, parents_id, service):
+def get_tree(folder_name, tree_list, root, parents_id, drive: GoogleDrive):
     """Gets folder tree relative paths.
 
     Recursively gets through subfolders, remembers their names ad ID's.
@@ -122,27 +78,20 @@ def get_tree(folder_name, tree_list, root, parents_id, service):
 
     """
     folder_id = parents_id[folder_name]
-
-    results = service.files().list(
-        pageSize=100,
-        q=("%r in parents and \
-        mimeType = 'application/vnd.google-apps.folder'and \
-        trashed != True" % folder_id)).execute()
-
-    items = results.get('files', [])
+    items = drive.ListFile(
+        {"q": f"'{folder_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"}
+    ).GetList()
     root += folder_name + os.path.sep
 
     for item in items:
-        parents_id[item['name']] = item['id']
-        tree_list.append(root + item['name'])
-        folder_id = [i['id'] for i in items
-                     if i['name'] == item['name']][0]
-        folder_name = item['name']
-        get_tree(folder_name, tree_list,
-                 root, parents_id, service)
+        parents_id[item["title"]] = item["id"]
+        tree_list.append(root + item["title"])
+        folder_id = [i["id"] for i in items if i["title"] == item["title"]][0]
+        folder_name = item["title"]
+        get_tree(folder_name, tree_list, root, parents_id, drive)
 
 
-def download_file_from_gdrive(file_path, drive_file, service):
+def download_file_from_gdrive(file_dir, drive_file, drive: GoogleDrive):
     """Downloads file from Google Drive.
 
     If file is Google Doc's type, then it will be downloaded
@@ -154,32 +103,20 @@ def download_file_from_gdrive(file_path, drive_file, service):
         and mimeType.
         service: Google Drive service instance.
     """
-    file_id = drive_file['id']
-    file_name = drive_file['name']
-    if drive_file['mimeType'] in GOOGLE_MIME_TYPES.keys():
-        if file_name.endswith(GOOGLE_MIME_TYPES[drive_file['mimeType']][1]):
-            file_name = drive_file['name']
+    file_id = drive_file["id"]
+    file_name = drive_file["title"]
+
+    file_download = drive.CreateFile({"id": file_id})
+
+    if drive_file["mimeType"] in GOOGLE_MIME_TYPES.keys():
+        if file_name.endswith(GOOGLE_MIME_TYPES[drive_file["mimeType"]][1]):
+            file_name = drive_file["title"]
         else:
-            file_name = '{}{}'.format(
-                drive_file['name'],
-                GOOGLE_MIME_TYPES[drive_file['mimeType']][1])
-            service.files().update(fileId=file_id,
-                                   body={'name': file_name}).execute()
+            file_name = "{}{}".format(drive_file["title"], GOOGLE_MIME_TYPES[drive_file["mimeType"]][1])
+            file_download["title"] = file_name
+        file_download["mimeType"] = GOOGLE_MIME_TYPES[drive_file["mimeType"]][0]
 
-
-        request = service.files().export(
-            fileId=file_id,
-            mimeType=(GOOGLE_MIME_TYPES[drive_file['mimeType']])[0]).execute()
-        with io.FileIO(os.path.join(file_path, file_name), 'wb') as file_write:
-            file_write.write(request)
-
-    else:
-        request = service.files().get_media(fileId=file_id)
-        file_io = io.FileIO(os.path.join(file_path, drive_file['name']), 'wb')
-        downloader = MediaIoBaseDownload(file_io, request)
-        done = False
-        while done is False:
-            _, done = downloader.next_chunk()
+    file_download.GetContentFile(os.path.join(file_dir, file_name))
 
 
 def by_lines(input_str):
@@ -191,35 +128,31 @@ def by_lines(input_str):
     return input_str.count(os.path.sep)
 
 
-def main():
-    """Shows basic usage of the Google Drive API.
-
-    Creates a Google Drive API service object and outputs the names and IDs
-    for up to 10 files.
-    """
+def pull(src_full_path, dest_dir):
+    """Pull files from Google Drive."""
     # credentials = get_credentials()
-    http = get_credentials().authorize(httplib2.Http())
-    service = discovery.build('drive', 'v3', http=http)
+    drive = load_authorized_gdrive()
 
     # Get id of Google Drive folder and it's path (from other script)
     # folder_id, full_path = initial_upload.check_upload(service)
-    folder_id, full_path = check_upload(service)
-    folder_name = full_path.split(os.path.sep)[-1]
-    tree_list, root, parents_id = [], '', {}
+    folder_id = get_target_folder_id(src_full_path, drive)
+    if folder_id is None:
+        raise BadParameter(f"{src_full_path} cannot be found.")
+    if not os.path.exists(dest_dir) and os.path.isdir(dest_dir):
+        raise BadParameter(f"{dest_dir} is not a valid directory.")
+    folder_name = src_full_path.split(":")[1].rstrip("/").split("/")[-1]
+    tree_list, root, parents_id = [], "", {}
 
-    # About_drive = service.about().get(
-    # fields='importFormats, exportFormats').execute()
-    # print(About_drive)
     parents_id[folder_name] = folder_id
-    get_tree(folder_name, tree_list, root, parents_id, service)
+    get_tree(folder_name, tree_list, root, parents_id, drive)
     os_tree_list = []
-    root_len = len(full_path.split(os.path.sep)[0:-2])
+    dest_full_path = os.path.join(dest_dir, folder_name)
+    root_len = len(dest_full_path.split(os.path.sep)[0:-2])
 
     # Get list of folders three paths on computer
-    for root, dirs, files in os.walk(full_path, topdown=True):
+    for root, dirs, files in os.walk(dest_full_path, topdown=True):
         for name in dirs:
-            var_path = (os.path.sep).join(
-                root.split(os.path.sep)[root_len + 1:])
+            var_path = (os.path.sep).join(root.split(os.path.sep)[root_len + 1 :])
             os_tree_list.append(os.path.join(var_path, name))
 
     # old folders on computer
@@ -231,83 +164,59 @@ def main():
 
     exact_folders.append(folder_name)
 
-    var = (os.path.sep).join(full_path.split(os.path.sep)[0:-1]) + os.path.sep
+    parent_folder = (os.path.sep).join(dest_full_path.split(os.path.sep)[0:-1]) + os.path.sep
 
     # Download folders from Drive
     download_folders = sorted(download_folders, key=by_lines)
 
     for folder_dir in download_folders:
-        variable = var + folder_dir
+        folder = parent_folder + folder_dir
         last_dir = folder_dir.split(os.path.sep)[-1]
 
         folder_id = parents_id[last_dir]
-        results = service.files().list(
-            pageSize=20, q=('%r in parents' % folder_id)).execute()
-
-        items = results.get('files', [])
-        os.makedirs(variable)
-        files = [f for f in items
-                 if f['mimeType'] != 'application/vnd.google-apps.folder']
+        items = drive.ListFile({"q": f"'{folder_id}' in parents and trashed = false"}).GetList()
+        os.makedirs(folder)
+        files = [f for f in items if f["mimeType"] != "application/vnd.google-apps.folder"]
 
         for drive_file in files:
-            # file_id = f['id']
-            download_file_from_gdrive(variable, drive_file, service)
+            download_file_from_gdrive(folder, drive_file, drive)
 
     # Check and refresh files in existing folders
     for folder_dir in exact_folders:
-        # var = '/'.join(full_path.split('/')[0:-1]) + '/'
-        variable = var + folder_dir
+
+        folder = parent_folder + folder_dir
         last_dir = folder_dir.split(os.path.sep)[-1]
-        os_files = [f for f in os.listdir(variable)
-                    if os.path.isfile(os.path.join(variable, f))]
+        os_files = [f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
         folder_id = parents_id[last_dir]
 
-        results = service.files().list(
-            pageSize=1000,
-            q=('%r in parents and \
-            mimeType!="application/vnd.google-apps.folder"' % folder_id),
-            fields="files(id, name, mimeType, \
-                modifiedTime, md5Checksum)").execute()
+        items = drive.ListFile(
+            {"q": f"'{folder_id}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false"}
+        ).GetList()
 
-        items = results.get('files', [])
-
-        refresh_files = [f for f in items if f['name'] in os_files]
-        upload_files = [f for f in items if f['name'] not in os_files]
-        remove_files = [f for f in os_files
-                        if f not in [j['name']for j in items]]
+        refresh_files = [f for f in items if f["title"] in os_files]
+        upload_files = [f for f in items if f["title"] not in os_files]
+        remove_files = [f for f in os_files if f not in [j["title"] for j in items]]
 
         for drive_file in refresh_files:
-            file_dir = os.path.join(variable, drive_file['name'])
-            file_time = os.path.getmtime(file_dir)
-            # mtime = drive_file['modifiedTime']
-            mtime = datetime.datetime.strptime(drive_file['modifiedTime'][:-2],
-                                               "%Y-%m-%dT%H:%M:%S.%f")
-            drive_time = time.mktime(mtime.timetuple())
+            file_dir = os.path.join(folder, drive_file["title"])
 
-            file_dir = os.path.join(variable, drive_file['name'])
-            os_file_md5 = hashlib.md5(open(file_dir, 'rb').read()).hexdigest()
-            if 'md5Checksum' in drive_file.keys():
-                # print(1, file['md5Checksum'])
-                drive_md5 = drive_file['md5Checksum']
-                # print(2, os_file_md5)
-            else:
-                drive_md5 = None
+            drive_md5 = drive_file["md5Checksum"]
+            os_file_md5 = hashlib.md5(open(file_dir, "rb").read()).hexdigest()
 
-            if (file_time < drive_time) or (drive_md5 != os_file_md5):
-                os.remove(os.path.join(variable, drive_file['name']))
-                download_file_from_gdrive(variable, drive_file, service)
+            if drive_md5 != os_file_md5:
+                os.remove(os.path.join(folder, drive_file["title"]))
+                download_file_from_gdrive(folder, drive_file, drive)
 
         for os_file in remove_files:
-            os.remove(os.path.join(variable, os_file))
+            os.remove(os.path.join(folder, os_file))
 
         for drive_file in upload_files:
-            download_file_from_gdrive(variable, drive_file, service)
+            download_file_from_gdrive(folder, drive_file, drive)
 
     # Delete old and unwanted folders from computer
     remove_folders = sorted(remove_folders, key=by_lines, reverse=True)
 
     for folder_dir in remove_folders:
-        # var = '/'.join(full_path.split('/')[0:-1]) + '/'
-        variable = var + folder_dir
+        folder = parent_folder + folder_dir
         last_dir = folder_dir.split(os.path.sep)[-1]
-        shutil.rmtree(variable)
+        shutil.rmtree(folder)
