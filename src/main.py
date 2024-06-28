@@ -1,7 +1,9 @@
 import click
 import yaml
+import os
 
 from push import push as pushing
+from pull import pull as pulling
 
 
 @click.group()
@@ -19,14 +21,21 @@ def push(src, dest):
 
 
 @cli.command()
-@click.option("-s", "--source")
-def pull(source):
-    pass
+@click.argument("src")
+@click.option("-d", "--dest", default=None, type=click.Path(exists=True))
+def pull(src, dest):
+    if dest is None:
+        dest = os.path.expanduser("~")
+    pulling(src, dest)
 
 
 @cli.command()
-def sync():
-    pass
+def remove_profile():
+    if os.path.exists("credentials.json"):
+        os.remove("credentials.json")
+        print("Profile removed successfully.")
+    else:
+        print("No profile found.")
 
 
 @cli.command()
