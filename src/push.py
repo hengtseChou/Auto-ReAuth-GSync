@@ -62,7 +62,7 @@ def folder_upload(src_full_path, target_parents_id, drive: GoogleDrive):
     return parents_id
 
 
-def check_upload(src_full_path: str, dest_full_path: str, drive: GoogleDrive) -> str:
+def check_upload(src_full_path: str, dest_dir: str, drive: GoogleDrive) -> str:
     """Checks if folder is already uploaded,
     and if it's not, uploads it.
 
@@ -76,8 +76,8 @@ def check_upload(src_full_path: str, dest_full_path: str, drive: GoogleDrive) ->
 
     target_parents_id = "root"
 
-    if dest_full_path != "gdrive:":
-        dest_folder_list = dest_full_path.split(":")[1].split(os.path.sep)
+    if dest_dir != "gdrive:":
+        dest_folder_list = dest_dir.split(":")[1].rstrip(os.path.sep).split(os.path.sep)
         dest_parents_id = []
         for dest in dest_folder_list:
             if not dest_parents_id:
@@ -157,21 +157,14 @@ def by_lines(input_str):
     return input_str.count(os.path.sep)
 
 
-def check_valid_dest_path(dest_full_path):
-    pass
-
-
-def push(src_full_path, dest_full_path):
-    """Syncronizes computer folder with Google Drive folder.
-
-    Checks files if they exist, uploads new files and subfolders,
-    deletes old files from Google Drive and refreshes existing stuff.
-    """
+def push(src_full_path, dest_dir):
+    """Push files to google drive"""
     drive = load_authorized_gdrive()
+    dest_dir = dest_dir.rstrip("/")
 
     # Get id of Google Drive folder and it's path (from other script)
     # folder_id, full_path = initial_upload.check_upload(service)
-    folder_id = check_upload(src_full_path, dest_full_path, drive)
+    folder_id = check_upload(src_full_path, dest_dir, drive)
     folder_name = src_full_path.split(os.path.sep)[-1]
     tree_list = []
     root = ""
@@ -203,12 +196,12 @@ def push(src_full_path, dest_full_path):
 
     # Here we upload new (absent on Drive) folders
     for folder_dir in upload_folders:
-        var = os.path.sep + os.path.join(*src_full_path.split(os.path.sep)[0:-1])
-        variable = os.path.join(var, folder_dir)
+        parent_folder = os.path.sep + os.path.join(*src_full_path.split(os.path.sep)[0:-1])
+        folder = os.path.join(parent_folder, folder_dir)
         last_dir = folder_dir.split(os.path.sep)[-1]
         pre_last_dir = folder_dir.split(os.path.sep)[-2]
 
-        files = [f for f in os.listdir(variable) if os.path.isfile(os.path.join(variable, f))]
+        files = [f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
 
         folder_metadata = {
             "title": last_dir,
@@ -222,7 +215,7 @@ def push(src_full_path, dest_full_path):
         parents_id[last_dir] = folder_id
 
         for os_file in files:
-            os_file_mimetype = mimetypes.MimeTypes().guess_type(os.path.join(variable, os_file))[0]
+            os_file_mimetype = mimetypes.MimeTypes().guess_type(os.path.join(folder, os_file))[0]
             file_metadata = {
                 "name": os_file,
                 "parents": [{"id": folder_id}],
@@ -230,17 +223,17 @@ def push(src_full_path, dest_full_path):
             }
 
             file_upload = drive.CreateFile(file_metadata)
-            file_upload.SetContentFile(os.path.join(variable, os_file))
+            file_upload.SetContentFile(os.path.join(folder, os_file))
             file_upload.Upload()
 
     # Check files in existed folders and replace them
     # with newer versions if needed
     for folder_dir in exact_folders:
 
-        var = os.path.sep + (os.path.sep).join(src_full_path.split(os.path.sep)[0:-1])
-        variable = os.path.join(var, folder_dir)
+        parent_folder = os.path.sep + (os.path.sep).join(src_full_path.split(os.path.sep)[0:-1])
+        folder = os.path.join(parent_folder, folder_dir)
         last_dir = folder_dir.split(os.path.sep)[-1]
-        os_files = [f for f in os.listdir(variable) if os.path.isfile(os.path.join(variable, f))]
+        os_files = [f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
         items = drive.ListFile(
             {
                 "q": f"'{parents_id[last_dir]}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false"
@@ -253,7 +246,7 @@ def push(src_full_path, dest_full_path):
 
         # Check files that exist both on Drive and on PC
         for drive_file in refresh_files:
-            file_dir = os.path.join(variable, drive_file["title"])
+            file_dir = os.path.join(folder, drive_file["title"])
 
             drive_md5 = drive_file["md5Checksum"]
             os_file_md5 = hashlib.md5(open(file_dir, "rb").read()).hexdigest()
@@ -271,7 +264,6 @@ def push(src_full_path, dest_full_path):
                 file_update = drive.CreateFile(file_metadata)
                 file_update.SetContentFile(file_dir)
                 file_update.Upload()
-                print(f"update file {drive_file['title']}")
 
         # Remove old files from Drive
         for drive_file in remove_files:
@@ -283,7 +275,7 @@ def push(src_full_path, dest_full_path):
         # Upload new files on Drive
         for os_file in upload_files:
 
-            file_dir = os.path.join(variable, os_file)
+            file_dir = os.path.join(folder, os_file)
 
             # File's new content.
             filemime = mimetypes.MimeTypes().guess_type(file_dir)[0]
@@ -301,8 +293,8 @@ def push(src_full_path, dest_full_path):
 
     # Delete old folders from Drive
     for folder_dir in remove_folders:
-        var = (os.path.sep).join(src_full_path.split(os.path.sep)[0:-1]) + os.path.sep
-        variable = var + folder_dir
+        parent_folder = (os.path.sep).join(src_full_path.split(os.path.sep)[0:-1]) + os.path.sep
+        folder = parent_folder + folder_dir
         last_dir = folder_dir.split("/")[-1]
         folder_id = parents_id[last_dir]
         file_trash = drive.CreateFile({"id": folder_id})
