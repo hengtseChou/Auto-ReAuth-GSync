@@ -4,7 +4,7 @@ import os
 
 from pydrive2.drive import GoogleDrive
 
-from gdrive import load_authorized_gdrive
+from argsync.gdrive import load_authorized_gdrive
 
 
 def create_empty_folder(folder_name, parents_id, drive: GoogleDrive):

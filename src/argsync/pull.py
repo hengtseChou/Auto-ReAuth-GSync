@@ -5,7 +5,7 @@ import shutil
 from click import BadParameter
 from pydrive2.drive import GoogleDrive
 
-from gdrive import load_authorized_gdrive
+from argsync.gdrive import load_authorized_gdrive
 
 GOOGLE_MIME_TYPES = {
     "application/vnd.google-apps.document": [
@@ -141,6 +141,8 @@ def pull(src_full_path, dest_dir):
     if not os.path.exists(dest_dir) and os.path.isdir(dest_dir):
         raise BadParameter(f"{dest_dir} is not a valid directory.")
     folder_name = src_full_path.split(":")[1].rstrip("/").split("/")[-1]
+    if not os.path.exists(os.path.join(dest_dir, folder_name)):
+        os.mkdir(os.path.join(dest_dir, folder_name))
     tree_list, root, parents_id = [], "", {}
 
     parents_id[folder_name] = folder_id

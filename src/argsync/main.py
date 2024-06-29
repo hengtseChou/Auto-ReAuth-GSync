@@ -1,9 +1,11 @@
+import os
+import pathlib
+
 import click
 import yaml
-import os
 
-from push import push as pushing
-from pull import pull as pulling
+from argsync.pull import pull as pulling
+from argsync.push import push as pushing
 
 
 @click.group()
@@ -15,6 +17,9 @@ def cli():
 @click.argument("src", type=click.Path(exists=True))
 @click.option("-d", "--dest", default=None)
 def push(src, dest):
+    settings_path = pathlib.Path(__file__).parent / "settings.yaml"
+    if not os.path.exists(settings_path):
+        raise click.ClickException("Google Drive API not setup. Please run `argsync setup` to resolve it.")
     if dest is None:
         dest = "gdrive:"
     pushing(src, dest)
@@ -24,6 +29,9 @@ def push(src, dest):
 @click.argument("src")
 @click.option("-d", "--dest", default=None, type=click.Path(exists=True))
 def pull(src, dest):
+    settings_path = pathlib.Path(__file__).parent / "settings.yaml"
+    if not os.path.exists(settings_path):
+        raise click.ClickException("Google Drive API not setup. Please run `argsync setup` to resolve it.")
     if dest is None:
         dest = os.path.expanduser("~")
     pulling(src, dest)
@@ -31,8 +39,11 @@ def pull(src, dest):
 
 @cli.command()
 def remove_profile():
-    if os.path.exists("credentials.json"):
-        os.remove("credentials.json")
+
+    creds = pathlib.Path(__file__).parent / "credentials.json"
+
+    if os.path.exists(creds):
+        os.remove(creds)
         print("Profile removed successfully.")
     else:
         print("No profile found.")
@@ -40,6 +51,10 @@ def remove_profile():
 
 @cli.command()
 def setup():
+    settings_path = pathlib.Path(__file__).parent / "settings.yaml"
+    if os.path.exists(settings_path):
+        click.confirm("Setup file already exists. Overwrite?", abort=True)
+
     client_id = click.prompt("Please enter your client id", type=str)
     client_secret = click.prompt("client secret", type=str, hide_input=True)
 
@@ -48,11 +63,12 @@ def setup():
         "client_config": {"client_id": client_id, "client_secret": client_secret},
         "save_credentials": True,
         "save_credentials_backend": "file",
-        "save_credentials_file": "credentials.json",
+        "save_credentials_file": str(pathlib.Path(__file__).parent / "credentials.json"),
         "get_refresh_token": True,
         "oauth_scope": ["https://www.googleapis.com/auth/drive"],
     }
-    with open("settings.yaml", "w") as f:
+    settings_path = pathlib.Path(__file__).parent / "settings.yaml"
+    with open(settings_path, "w") as f:
         yaml.dump(settings_yaml, f, default_flow_style=False)
     print("Setup complete.")
 
