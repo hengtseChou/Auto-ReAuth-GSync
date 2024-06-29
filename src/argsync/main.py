@@ -1,7 +1,7 @@
 import os
 import pathlib
-import warnings
 import re
+import warnings
 
 import click
 import yaml
@@ -10,9 +10,10 @@ from argsync.pull import pull as pulling
 from argsync.push import push as pushing
 
 
-def is_valid_gdrive_path(path: str)->bool:
-    pattern = r'^gdrive:([a-zA-Z0-9 _\.\-\u4E00-\u9FFF]*)$'
+def is_valid_gdrive_path(path: str) -> bool:
+    pattern = r"^gdrive:([a-zA-Z0-9 _\.\-\u4E00-\u9FFF]*)$"
     return bool(re.match(pattern, path))
+
 
 @click.group()
 def cli():
@@ -23,8 +24,7 @@ def cli():
 @click.argument("src", type=click.Path(exists=True))
 @click.option("-d", "--dest", default=None, help="Push into this gdrive folder.")
 def push(src, dest):
-    """Push to gdrive folder.
-    """
+    """Push to gdrive folder."""
     settings_path = pathlib.Path(__file__).parent / "settings.yaml"
     if not os.path.exists(settings_path):
         raise click.ClickException("Google Drive API not setup. Please run `argsync setup` to resolve it.")
@@ -39,8 +39,7 @@ def push(src, dest):
 @click.argument("src")
 @click.option("-d", "--dest", default=None, type=click.Path(exists=True), help="Pull folder to this directory.")
 def pull(src, dest):
-    """Pull from gdrive folder.
-    """
+    """Pull from gdrive folder."""
     settings_path = pathlib.Path(__file__).parent / "settings.yaml"
     if not os.path.exists(settings_path):
         raise click.ClickException("Google Drive API not setup. Please run `argsync setup` to resolve it.")
@@ -53,8 +52,7 @@ def pull(src, dest):
 
 @cli.command()
 def remove_profile():
-    """Remove user's credentials.
-    """
+    """Remove user's credentials."""
 
     creds = pathlib.Path(__file__).parent / "credentials.json"
 
@@ -67,8 +65,7 @@ def remove_profile():
 
 @cli.command()
 def setup():
-    """Setup Google Drive API.
-    """
+    """Setup Google Drive API."""
     settings_path = pathlib.Path(__file__).parent / "settings.yaml"
     if os.path.exists(settings_path):
         click.confirm("Setup file exists. Overwrite?", abort=True)
