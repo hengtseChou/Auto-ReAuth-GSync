@@ -1,9 +1,10 @@
 import hashlib
 import os
 import shutil
-import tqdm
+from concurrent.futures import ThreadPoolExecutor
 
 import click
+import tqdm
 from pydrive2.drive import GoogleDrive
 
 from argsync.gdrive import load_authorized_gdrive
@@ -13,19 +14,21 @@ GOOGLE_MIME_TYPES = {
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         ".docx",
     ],
-    # 'application/vnd.google-apps.document':
-    # 'application/vnd.oasis.opendocument.text',
     "application/vnd.google-apps.spreadsheet": [
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         ".xlsx",
     ],
-    # 'application/vnd.oasis.opendocument.spreadsheet',
     "application/vnd.google-apps.presentation": [
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         ".pptx",
     ],
-    # 'application/vnd.oasis.opendocument.presentation'
 }
+
+
+def list_folders(parents_id, drive: GoogleDrive):
+    return drive.ListFile(
+        {"q": f"'{parents_id}' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'"}
+    ).GetList()
 
 
 def get_target_folder_id(src_full_path: str, drive: GoogleDrive) -> str:
@@ -37,19 +40,13 @@ def get_target_folder_id(src_full_path: str, drive: GoogleDrive) -> str:
     src_parents_id = []
     for src in src_folder_list:
         if not src_parents_id:
-            items = drive.ListFile(
-                {"q": "'root' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'"}
-            ).GetList()
+            items = list_folders("root", drive)
             if src in [item["title"] for item in items]:
                 new_folder_id = [item["id"] for item in items if item["title"] == src][0]
             else:
                 return None
         else:
-            items = drive.ListFile(
-                {
-                    "q": f"'{src_parents_id[-1]}' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'"
-                }
-            ).GetList()
+            items = list_folders(src_parents_id[-1], drive)
             if src in [item["title"] for item in items]:
                 new_folder_id = [item["id"] for item in items if item["title"] == src][0]
             else:
@@ -79,9 +76,7 @@ def get_tree(folder_name, tree_list, root, parents_id, drive: GoogleDrive):
 
     """
     folder_id = parents_id[folder_name]
-    items = drive.ListFile(
-        {"q": f"'{folder_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"}
-    ).GetList()
+    items = list_folders(folder_id, drive)
     root += folder_name + os.path.sep
 
     for item in items:
@@ -181,11 +176,12 @@ def pull(src_full_path, dest_dir):
 
         folder_id = parents_id[last_dir]
         items = drive.ListFile({"q": f"'{folder_id}' in parents and trashed = false"}).GetList()
-        os.makedirs(folder)
+        os.mkdir(folder)
         files = [f for f in items if f["mimeType"] != "application/vnd.google-apps.folder"]
 
-        for drive_file in files:
-            download_file_from_gdrive(folder, drive_file, drive)
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            for drive_file in files:
+                executor.submit(download_file_from_gdrive, folder, drive_file, drive)
 
     # Check and refresh files in existing folders
     print("Updating existing folders...")
@@ -196,29 +192,29 @@ def pull(src_full_path, dest_dir):
         os_files = [f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
         folder_id = parents_id[last_dir]
 
-        items = drive.ListFile(
-            {"q": f"'{folder_id}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false"}
-        ).GetList()
+        items = list_folders(folder_id, drive)
 
-        refresh_files = [f for f in items if f["title"] in os_files]
         upload_files = [f for f in items if f["title"] not in os_files]
-        remove_files = [f for f in os_files if f not in [j["title"] for j in items]]
+        refresh_files = [f for f in items if f["title"] in os_files]
+        remove_files = [f for f in os_files if f not in [i["title"] for i in items]]
 
-        for drive_file in refresh_files:
-            file_dir = os.path.join(folder, drive_file["title"])
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            for drive_file in upload_files:
+                executor.submit(download_file_from_gdrive, folder, drive_file, drive)
 
-            drive_md5 = drive_file["md5Checksum"]
-            os_file_md5 = hashlib.md5(open(file_dir, "rb").read()).hexdigest()
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            for drive_file in refresh_files:
+                file_dir = os.path.join(folder, drive_file["title"])
 
-            if drive_md5 != os_file_md5:
-                os.remove(os.path.join(folder, drive_file["title"]))
-                download_file_from_gdrive(folder, drive_file, drive)
+                drive_md5 = drive_file["md5Checksum"]
+                os_file_md5 = hashlib.md5(open(file_dir, "rb").read()).hexdigest()
+
+                if drive_md5 != os_file_md5:
+                    os.remove(os.path.join(folder, drive_file["title"]))
+                    executor.submit(download_file_from_gdrive, folder, drive_file, drive)
 
         for os_file in remove_files:
             os.remove(os.path.join(folder, os_file))
-
-        for drive_file in upload_files:
-            download_file_from_gdrive(folder, drive_file, drive)
 
     # Delete old and unwanted folders from computer
     remove_folders = sorted(remove_folders, key=by_lines, reverse=True)
