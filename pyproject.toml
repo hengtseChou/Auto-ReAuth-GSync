@@ -1,0 +1,28 @@
+[project]
+name = "argsync"
+version = "0.1.6"
+authors = [
+  { name="hengtseChou", email="hankthedev@gmail.com" },
+]
+description="Google Drive syncing script"
+dependencies = [
+  "click",
+  "pydrive2"
+]
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/hengtseChou/Auto-ReAuth-GSync"
+
+[project.scripts]
+argsync = "argsync.main:cli"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
