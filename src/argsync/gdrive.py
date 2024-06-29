@@ -14,6 +14,7 @@ def load_authorized_gdrive() -> GoogleDrive:
     gauth.LoadCredentialsFile(creds)
     if gauth.credentials is None:
         # Authenticate if they're not there
+        print("No credentials found. You will be redirect to the authorization page.")
         gauth.LocalWebserverAuth()
     elif gauth.access_token_expired:
         # Refresh them if expired

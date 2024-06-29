@@ -1,8 +1,9 @@
 import hashlib
 import os
 import shutil
+import tqdm
 
-from click import BadParameter
+import click
 from pydrive2.drive import GoogleDrive
 
 from argsync.gdrive import load_authorized_gdrive
@@ -135,16 +136,18 @@ def pull(src_full_path, dest_dir):
 
     # Get id of Google Drive folder and it's path (from other script)
     # folder_id, full_path = initial_upload.check_upload(service)
+    print("Pull started.")
     folder_id = get_target_folder_id(src_full_path, drive)
     if folder_id is None:
-        raise BadParameter(f"{src_full_path} cannot be found.")
+        raise click.BadParameter(f"{src_full_path} cannot be found.")
     if not os.path.exists(dest_dir) and os.path.isdir(dest_dir):
-        raise BadParameter(f"{dest_dir} is not a valid directory.")
+        raise click.BadParameter(f"{dest_dir} is not a valid directory.")
     folder_name = src_full_path.split(":")[1].rstrip("/").split("/")[-1]
     if not os.path.exists(os.path.join(dest_dir, folder_name)):
         os.mkdir(os.path.join(dest_dir, folder_name))
     tree_list, root, parents_id = [], "", {}
 
+    print("Comparing gdrive to local stroage...")
     parents_id[folder_name] = folder_id
     get_tree(folder_name, tree_list, root, parents_id, drive)
     os_tree_list = []
@@ -171,7 +174,8 @@ def pull(src_full_path, dest_dir):
     # Download folders from Drive
     download_folders = sorted(download_folders, key=by_lines)
 
-    for folder_dir in download_folders:
+    print("Downloading new folders...")
+    for folder_dir in tqdm.tqdm(download_folders, disable=(len(download_folders) == 0)):
         folder = parent_folder + folder_dir
         last_dir = folder_dir.split(os.path.sep)[-1]
 
@@ -184,7 +188,8 @@ def pull(src_full_path, dest_dir):
             download_file_from_gdrive(folder, drive_file, drive)
 
     # Check and refresh files in existing folders
-    for folder_dir in exact_folders:
+    print("Updating existing folders...")
+    for folder_dir in tqdm.tqdm(exact_folders, disable=(len(exact_folders) == 0)):
 
         folder = parent_folder + folder_dir
         last_dir = folder_dir.split(os.path.sep)[-1]
@@ -218,7 +223,9 @@ def pull(src_full_path, dest_dir):
     # Delete old and unwanted folders from computer
     remove_folders = sorted(remove_folders, key=by_lines, reverse=True)
 
-    for folder_dir in remove_folders:
+    print("Deleting unwanted folders...")
+    for folder_dir in tqdm.tqdm(remove_folders, disable=(len(remove_folders) == 0)):
         folder = parent_folder + folder_dir
         last_dir = folder_dir.split(os.path.sep)[-1]
         shutil.rmtree(folder)
+    print("Pull completed.")

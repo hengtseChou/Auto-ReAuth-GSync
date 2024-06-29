@@ -1,13 +1,14 @@
 [project]
 name = "argsync"
-version = "0.1.6"
+version = "0.1.7"
 authors = [
   { name="hengtseChou", email="hankthedev@gmail.com" },
 ]
 description="Google Drive syncing script"
 dependencies = [
   "click",
-  "pydrive2"
+  "pydrive2",
+  "tqdm"
 ]
 readme = "README.md"
 requires-python = ">=3.8"

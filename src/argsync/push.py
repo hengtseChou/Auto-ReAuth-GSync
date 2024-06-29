@@ -1,6 +1,7 @@
 import hashlib
 import mimetypes
 import os
+import tqdm
 
 from pydrive2.drive import GoogleDrive
 
@@ -108,8 +109,10 @@ def check_upload(src_full_path: str, dest_dir: str, drive: GoogleDrive) -> str:
     if folder_name in [item["title"] for item in items]:
         folder_id = [item["id"] for item in items if item["title"] == folder_name][0]
     else:
+        print(f"{dest_dir}/{folder_name} does not exist. Uploading folder to gdrive...")
         parents_id = folder_upload(src_full_path, target_parents_id, drive)
         folder_id = parents_id[folder_name]
+        print("Upload completed.")
 
     return folder_id
 
@@ -162,6 +165,7 @@ def push(src_full_path, dest_dir):
     drive = load_authorized_gdrive()
     dest_dir = dest_dir.rstrip("/")
 
+    print("Push started.")
     # Get id of Google Drive folder and it's path (from other script)
     # folder_id, full_path = initial_upload.check_upload(service)
     folder_id = check_upload(src_full_path, dest_dir, drive)
@@ -170,6 +174,7 @@ def push(src_full_path, dest_dir):
     root = ""
     parents_id = {}
 
+    print("Comparing local stroage to gdrive...")
     parents_id[folder_name] = folder_id
     get_tree(folder_name, tree_list, root, parents_id, drive)
     os_tree_list = []
@@ -195,7 +200,8 @@ def push(src_full_path, dest_dir):
     upload_folders = sorted(upload_folders, key=by_lines)
 
     # Here we upload new (absent on Drive) folders
-    for folder_dir in upload_folders:
+    print("Uploading New folders...")
+    for folder_dir in tqdm.tqdm(upload_folders, disable=(len(upload_folders) == 0)):
         parent_folder = os.path.sep + os.path.join(*src_full_path.split(os.path.sep)[0:-1])
         folder = os.path.join(parent_folder, folder_dir)
         last_dir = folder_dir.split(os.path.sep)[-1]
@@ -228,7 +234,8 @@ def push(src_full_path, dest_dir):
 
     # Check files in existed folders and replace them
     # with newer versions if needed
-    for folder_dir in exact_folders:
+    print("Updating existing folders...")
+    for folder_dir in tqdm.tqdm(exact_folders, disable=(len(exact_folders) == 0)):
 
         parent_folder = os.path.sep + (os.path.sep).join(src_full_path.split(os.path.sep)[0:-1])
         folder = os.path.join(parent_folder, folder_dir)
@@ -292,10 +299,12 @@ def push(src_full_path, dest_dir):
     remove_folders = sorted(remove_folders, key=by_lines, reverse=True)
 
     # Delete old folders from Drive
-    for folder_dir in remove_folders:
+    print("Deleting unwanted folders...")
+    for folder_dir in tqdm.tqdm(remove_folders, disable=(len(remove_folders) == 0)):
         parent_folder = (os.path.sep).join(src_full_path.split(os.path.sep)[0:-1]) + os.path.sep
         folder = parent_folder + folder_dir
         last_dir = folder_dir.split("/")[-1]
         folder_id = parents_id[last_dir]
         file_trash = drive.CreateFile({"id": folder_id})
         file_trash.Trash()
+    print("Push completed.")
