@@ -190,7 +190,8 @@ def pull(src_full_path: str, dest_dir: str, num_of_downloader: int) -> None:
     # Get id of Google Drive folder and it's path (from other script)
     # folder_id, full_path = initial_upload.check_upload(service)
     print("Pull started.")
-    print(f"Number of downloaders: {num_of_downloader}")
+    if num_of_downloader != 5:
+        print(f"Number of downloaders: {num_of_downloader}")
     folder_id = get_target_folder_id(src_full_path, drive)
     if folder_id is None:
         raise click.BadParameter(f"{src_full_path} cannot be found.")

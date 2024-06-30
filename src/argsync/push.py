@@ -269,7 +269,8 @@ def push(src_full_path: str, dest_dir: str, ignore_dirs: Tuple[str], num_of_uplo
     print("Push started.")
     if ignore_dirs:
         print(f"Ignoring dirs: {' '.join(ignore_dirs)}")
-    print(f"Number of uploaders: {num_of_uploader}")
+    if num_of_uploader != 5:
+        print(f"Number of uploaders: {num_of_uploader}")
     # Get id of Google Drive folder and it's path (from other script)
     # folder_id, full_path = initial_upload.check_upload(service)
     folder_name = src_full_path.split(os.path.sep)[-1]
@@ -407,7 +408,7 @@ def push(src_full_path: str, dest_dir: str, ignore_dirs: Tuple[str], num_of_uplo
     # Delete old folders from Drive
     removal_tasks = []
     for folder_dir in remove_folders:
-        folder = parent_folder + folder_dir
+        folder = os.path.join(parent_folder, folder_dir)
         last_dir = pathlib.Path(folder_dir)
         folder_id = parents_id[str(last_dir)]
         removal_tasks.append((folder_id, drive))
