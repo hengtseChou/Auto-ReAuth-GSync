@@ -9,6 +9,20 @@ from pydrive2.drive import GoogleDrive
 from argsync.gdrive import load_authorized_gdrive
 
 
+def list_folders(parents_id, drive: GoogleDrive):
+
+    return drive.ListFile(
+        {"q": f"'{parents_id}' in parents and trashed = false and mimeType = 'application/vnd.google-apps.folder'"}
+    ).GetList()
+
+
+def list_files(parents_id, drive: GoogleDrive):
+
+    return drive.ListFile(
+        {"q": f"'{parents_id}' in parents and trashed = false and mimeType != 'application/vnd.google-apps.folder'"}
+    ).GetList()
+
+
 def create_empty_folder(folder_name, parents_id, drive: GoogleDrive):
 
     folder_metadata = {
@@ -22,54 +36,6 @@ def create_empty_folder(folder_name, parents_id, drive: GoogleDrive):
     folder_id = new_folder["id"]
 
     return folder_id
-
-
-def file_upload(args):
-    """Upload a file to Google Drive using provided arguments packed as a tuple.
-
-    Args:
-        args (tuple): A tuple containing file_metadata, file_path, and drive object.
-    """
-    file_metadata, file_path, drive = args
-    file = drive.CreateFile(file_metadata)
-    file.SetContentFile(file_path)
-    file.Upload()
-    return file_path
-
-
-def file_trash(args):
-    """Trashing a file from Google Drive using provided arguments packed as a tuple.
-
-    Args:
-        args (tuple): A tuple containing file_id, and drive object.
-    """
-    file_id, drive = args
-    file = drive.CreateFile({"id": file_id})
-    file.Trash()
-
-
-def progress_bar_with_threading_executor(fn, iterable, desc):
-
-    disable_pbar = len(iterable) == 0
-
-    with tqdm.tqdm(total=len(iterable), desc=desc, disable=disable_pbar) as progress:
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            for _ in executor.map(fn, iterable):
-                progress.update()
-
-
-def list_folders(parents_id, drive: GoogleDrive):
-
-    return drive.ListFile(
-        {"q": f"'{parents_id}' in parents and trashed = false and mimeType = 'application/vnd.google-apps.folder'"}
-    ).GetList()
-
-
-def list_files(parents_id, drive: GoogleDrive):
-
-    return drive.ListFile(
-        {"q": f"'{parents_id}' in parents and trashed = false and mimeType != 'application/vnd.google-apps.folder'"}
-    ).GetList()
 
 
 def new_folder_upload(src_full_path, target_parents_id, drive: GoogleDrive, ignore_dirs):
@@ -121,21 +87,27 @@ def get_dest_dir_id(dest_dir, drive: GoogleDrive) -> str:
     if dest_dir != "gdrive:":
         dest_folder_list = dest_dir.split(":")[1].rstrip(os.path.sep).split(os.path.sep)
         dest_parents_id = []
+
         for dest in dest_folder_list:
             if not dest_parents_id:
                 items = list_folders("root", drive)
                 if dest in [item["title"] for item in items]:
                     new_folder_id = [item["id"] for item in items if item["title"] == dest][0]
+
                 else:
                     new_folder_id = create_empty_folder(dest, "root", drive)
+
             else:
                 items = list_folders(dest_parents_id[-1], drive)
                 if dest in [item["title"] for item in items]:
                     new_folder_id = [item["id"] for item in items if item["title"] == dest][0]
+
                 else:
                     new_folder_id = create_empty_folder(dest, dest_parents_id[-1], drive)
+
             dest_parents_id.append(new_folder_id)
         dest_dir_id = dest_parents_id[-1]
+
     return dest_dir_id
 
 
@@ -150,13 +122,46 @@ def check_upload(src_full_path: str, dest_dir_id: str, drive: GoogleDrive) -> st
         ID of uploaded folder, full path to this folder on computer.
 
     """
-
     folder_name = src_full_path.split(os.path.sep)[-1]
     items = list_folders(dest_dir_id, drive)
     if folder_name in [item["title"] for item in items]:
         folder_id = [item["id"] for item in items if item["title"] == folder_name][0]
         return folder_id
     return None
+
+
+def file_upload(args):
+    """Upload a file to Google Drive using provided arguments packed as a tuple.
+
+    Args:
+        args (tuple): A tuple containing file_metadata, file_path, and drive object.
+    """
+    file_metadata, file_path, drive = args
+    file = drive.CreateFile(file_metadata)
+    file.SetContentFile(file_path)
+    file.Upload()
+    return file_path
+
+
+def file_trash(args):
+    """Trashing a file from Google Drive using provided arguments packed as a tuple.
+
+    Args:
+        args (tuple): A tuple containing file_id, and drive object.
+    """
+    file_id, drive = args
+    file = drive.CreateFile({"id": file_id})
+    file.Trash()
+
+
+def progress_bar_with_threading_executor(fn, iterable, desc):
+
+    disable_pbar = len(iterable) == 0
+
+    with tqdm.tqdm(total=len(iterable), desc=desc, disable=disable_pbar) as progress:
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            for _ in executor.map(fn, iterable):
+                progress.update()
 
 
 def get_tree(folder_name, tree_list, root, parents_id, drive: GoogleDrive):
@@ -213,11 +218,13 @@ def push(src_full_path, dest_dir, ignore_dirs):
     folder_name = src_full_path.split(os.path.sep)[-1]
     dest_dir_id = get_dest_dir_id(dest_dir, drive)
     folder_id = check_upload(src_full_path, dest_dir_id, drive)
+
     if folder_id is None:
         print(f"{dest_dir}{folder_name} does not exist. Uploading folder to gdrive...")
         parents_id = new_folder_upload(src_full_path, dest_dir_id, drive, ignore_dirs)
         folder_id = parents_id[folder_name]
         print("Upload completed.")
+
     tree_list = []
     root = ""
     parents_id = {}
