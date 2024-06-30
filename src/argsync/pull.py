@@ -1,5 +1,6 @@
 import hashlib
 import os
+import pathlib
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Iterable, List, Tuple
@@ -146,12 +147,12 @@ def get_tree(folder_name: str, tree_list: List[str], root: str, parents_id: str,
     Returns:
         None. It will modify tree_list that was passed in.
     """
-    folder_id = parents_id[folder_name]
+    folder_id = parents_id[root + folder_name]
     items = list_folders(folder_id, drive)
     root += folder_name + os.path.sep
 
     for item in items:
-        parents_id[item["title"]] = item["id"]
+        parents_id[root + item["title"]] = item["id"]
         tree_list.append(root + item["title"])
         folder_id = [i["id"] for i in items if i["title"] == item["title"]][0]
         folder_name = item["title"]
@@ -217,19 +218,18 @@ def pull(src_full_path: str, dest_dir: str) -> None:
 
     exact_folders.append(folder_name)
 
-    parent_folder = (os.path.sep).join(dest_full_path.split(os.path.sep)[0:-1]) + os.path.sep
+    parent_folder = pathlib.Path(dest_full_path).parent.resolve()
 
     # Download folders from Drive
     download_folders = sorted(download_folders, key=by_lines)
 
     for folder_dir in download_folders:
 
-        folder = parent_folder + folder_dir
-        last_dir = folder_dir.split(os.path.sep)[-1]
-
-        folder_id = parents_id[last_dir]
+        folder = os.path.join(parent_folder, folder_dir)
         os.makedirs(folder)
         print(f"Created new folder {folder}")
+        last_dir = pathlib.Path(folder_dir)
+        folder_id = parents_id[str(last_dir)]
         files = list_files(folder_id, drive)
 
         download_tasks = []
@@ -240,10 +240,10 @@ def pull(src_full_path: str, dest_dir: str) -> None:
     # Check and refresh files in existing folders
     for folder_dir in exact_folders:
 
-        folder = parent_folder + folder_dir
-        last_dir = folder_dir.split(os.path.sep)[-1]
+        folder = os.path.join(parent_folder, folder_dir)
+        last_dir = pathlib.Path(folder_dir)
+        folder_id = parents_id[str(last_dir)]
         local_files = [f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
-        folder_id = parents_id[last_dir]
 
         items = list_files(folder_id, drive)
 
@@ -277,7 +277,6 @@ def pull(src_full_path: str, dest_dir: str) -> None:
     remove_folders = sorted(remove_folders, key=by_lines, reverse=True)
 
     for folder_dir in tqdm.tqdm(remove_folders, disable=(len(remove_folders) == 0), desc=f"Deleting unwanted folders"):
-        folder = parent_folder + folder_dir
-        last_dir = folder_dir.split(os.path.sep)[-1]
+        folder = os.path.join(parent_folder, folder_dir)
         shutil.rmtree(folder)
     print("Pull completed.")

@@ -1,8 +1,9 @@
 import hashlib
 import mimetypes
 import os
+import pathlib
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable, Dict, Iterable, List, Tuple
+from typing import Callable, Dict, List, Tuple
 
 import tqdm
 from pydrive2.drive import GoogleDrive, GoogleDriveFile
@@ -215,7 +216,7 @@ def progress_bar_with_threading_executor(fn: Callable, iterable: Tuple, desc: st
                 progress.update()
 
 
-def get_tree(folder_name: str, tree_list: List[str], root: str, parents_id: str, drive: GoogleDrive) -> None:
+def get_tree(folder_name: str, tree_list: List[str], root: str, parents_id: Dict, drive: GoogleDrive) -> None:
     """
     Recursively builds a list of all folder paths under a specified Google Drive folder.
 
@@ -229,12 +230,12 @@ def get_tree(folder_name: str, tree_list: List[str], root: str, parents_id: str,
     Returns:
         None. It will modify tree_list that was passed in.
     """
-    folder_id = parents_id[folder_name]
+    folder_id = parents_id[root + folder_name]
     items = list_folders(folder_id, drive)
     root += folder_name + os.path.sep
 
     for item in items:
-        parents_id[item["title"]] = item["id"]
+        parents_id[root + item["title"]] = item["id"]
         tree_list.append(root + item["title"])
         folder_id = [i["id"] for i in items if i["title"] == item["title"]][0]
         folder_name = item["title"]
@@ -317,19 +318,20 @@ def push(src_full_path: str, dest_dir: str, ignore_dirs: Tuple[str]) -> None:
     # so now in can be upload from top to down of tree
     upload_folders = sorted(upload_folders, key=by_lines)
 
+    parent_folder = pathlib.Path(src_full_path).parent.resolve()
+
     # Here we upload new (absent on Drive) folders
     for folder_dir in upload_folders:
-        parent_folder = os.path.sep + os.path.join(*src_full_path.split(os.path.sep)[0:-1])
         folder = os.path.join(parent_folder, folder_dir)
-        last_dir = folder_dir.split(os.path.sep)[-1]
-        pre_last_dir = folder_dir.split(os.path.sep)[-2]
+        last_dir = pathlib.Path(folder_dir)
+        pre_last_dir = pathlib.Path(folder_dir).parent
 
-        files = [f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
-        folder_id = create_empty_folder(last_dir, parents_id[pre_last_dir], drive)
-        print(f"Create new folder for {folder}")
-        parents_id[last_dir] = folder_id
+        folder_id = create_empty_folder(last_dir.name, parents_id[str(pre_last_dir)], drive)
+        print(f"Created new folder for {folder}")
+        parents_id[str(last_dir)] = folder_id
 
         upload_tasks = []
+        files = [f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
         for local_file in files:
             local_file_mimetype = (
                 mimetypes.MimeTypes().guess_type(os.path.join(folder, local_file))[0] or "application/octet-stream"
@@ -340,17 +342,16 @@ def push(src_full_path: str, dest_dir: str, ignore_dirs: Tuple[str]) -> None:
                 "mimeType": local_file_mimetype,
             }
             upload_tasks.append((file_metadata, os.path.join(folder, local_file), drive))
-        progress_bar_with_threading_executor(file_upload, upload_tasks, f"Uploading files in {folder}")
+        progress_bar_with_threading_executor(file_upload, upload_tasks, f"Uploading files from {folder}")
 
     # Check files in existed folders and replace them
     # with newer versions if needed
     for folder_dir in exact_folders:
 
-        parent_folder = (os.path.sep).join(src_full_path.split(os.path.sep)[0:-1])
         folder = os.path.join(parent_folder, folder_dir)
-        last_dir = folder_dir.split(os.path.sep)[-1]
+        last_dir = pathlib.Path(folder_dir)
         local_files = [f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
-        items = list_files(parents_id[last_dir], drive)
+        items = list_files(parents_id[str(last_dir)], drive)
 
         upload_files = [f for f in local_files if f not in [i["title"] for i in items]]
         update_files = [f for f in items if f["title"] in local_files]
@@ -367,7 +368,7 @@ def push(src_full_path: str, dest_dir: str, ignore_dirs: Tuple[str]) -> None:
                 "mimeType": local_file_mimetype,
             }
             upload_tasks.append((file_metadata, os.path.join(folder, local_file), drive))
-        progress_bar_with_threading_executor(file_upload, upload_tasks, f"Uploading files in {folder}")
+        progress_bar_with_threading_executor(file_upload, upload_tasks, f"Uploading files from {folder}")
 
         update_tasks = []
         for drive_file in update_files:
@@ -384,27 +385,26 @@ def push(src_full_path: str, dest_dir: str, ignore_dirs: Tuple[str]) -> None:
                 file_metadata = {
                     "id": file_id,
                     "title": drive_file["title"],
-                    "parents": [{"id": parents_id[last_dir]}],
+                    "parents": [{"id": parents_id[str(last_dir)]}],
                     "mimeType": file_mime,
                 }
                 update_tasks.append((file_metadata, file_dir, drive))
-        progress_bar_with_threading_executor(file_upload, update_tasks, f"Updating files in {folder}")
+        progress_bar_with_threading_executor(file_upload, update_tasks, f"Updating files from {folder}")
 
         removal_tasks = []
         for drive_file in remove_files:
             file_id = [f["id"] for f in items if f["title"] == drive_file["title"]][0]
             removal_tasks.append((file_id, drive))
-        progress_bar_with_threading_executor(file_trash, removal_tasks, f"Removing files in {folder}")
+        progress_bar_with_threading_executor(file_trash, removal_tasks, f"Removing files that were in {folder}")
 
     remove_folders = sorted(remove_folders, key=by_lines, reverse=True)
 
     # Delete old folders from Drive
     removal_tasks = []
     for folder_dir in remove_folders:
-        parent_folder = (os.path.sep).join(src_full_path.split(os.path.sep)[0:-1]) + os.path.sep
         folder = parent_folder + folder_dir
-        last_dir = folder_dir.split("/")[-1]
-        folder_id = parents_id[last_dir]
-        removal_tasks.append((file_id, drive))
+        last_dir = pathlib.Path(folder_dir)
+        folder_id = parents_id[str(last_dir)]
+        removal_tasks.append((folder_id, drive))
     progress_bar_with_threading_executor(file_trash, removal_tasks, "Deleting unwanted folders")
     print("Push completed.")
