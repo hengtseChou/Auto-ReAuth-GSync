@@ -1,0 +1,22 @@
+#!/bin/sh
+if git diff --cached --name-only | grep -q "src/argsync/pull.py"; then
+  sed -i 's/from gdrive import load_authorized_gdrive/from argsync.gdrive import load_authorized_gdrive/g' "src/argsync/pull.py"
+  isort -q src/argsync/pull.py 
+  black src/argsync/pull.py -l 120 -q
+  git add src/argsync/pull.py
+fi
+
+if git diff --cached --name-only | grep -q "src/argsync/push.py"; then
+  sed -i 's/from gdrive import load_authorized_gdrive/from argsync.gdrive import load_authorized_gdrive/g' "src/argsync/push.py"
+  isort -q src/argsync/push.py 
+  black src/argsync/push.py -l 120 -q
+  git add src/argsync/push.py
+fi
+
+if git diff --cached --name-only | grep -q "src/argsync/main.py"; then
+  sed -i 's/from pull import pull as pulling/from argsync.pull import pull as pulling/g' "src/argsync/main.py"
+  sed -i 's/from push import push as pushing/from argsync.push import push as pushing/g' "src/argsync/main.py"
+  isort -q src/argsync/main.py 
+  black src/argsync/main.py -l 120 -q
+  git add src/argsync/main.py
+fi
