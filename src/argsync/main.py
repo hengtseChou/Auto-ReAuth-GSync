@@ -23,7 +23,8 @@ def cli():
 @cli.command()
 @click.argument("src", type=click.Path(exists=True))
 @click.option("-d", "--dest", default=None, help="Push into this gdrive folder.")
-def push(src, dest):
+@click.option("-i", "--ignore", multiple=True, help="Set the dirs to ignore when pushing.")
+def push(src, dest, ignore):
     """Push to gdrive folder."""
     settings_path = pathlib.Path(__file__).parent / "settings.yaml"
     if not os.path.exists(settings_path):
@@ -32,7 +33,7 @@ def push(src, dest):
         dest = "gdrive:"
     if not is_valid_gdrive_path(dest):
         raise click.BadParameter("The path to Google Drive folder should be like `gdrive:path/to/folder`.")
-    pushing(src, dest)
+    pushing(src, dest, ignore)
 
 
 @cli.command()

@@ -51,9 +51,8 @@ def list_files(parents_id, drive: GoogleDrive):
     ).GetList()
 
 
-def folder_upload(src_full_path, target_parents_id, drive: GoogleDrive):
+def new_folder_upload(src_full_path, target_parents_id, drive: GoogleDrive, ignore_dirs):
     """Uploads folder and all it's content (if it doesnt exists)
-    in root folder.
 
     Args:
         items: List of folders in root path on Google Drive.
@@ -66,10 +65,13 @@ def folder_upload(src_full_path, target_parents_id, drive: GoogleDrive):
 
     parents_id = {}
 
-    for root, _, files in os.walk(src_full_path, topdown=True):
-        last_dir = root.split("/")[-1]
-        pre_last_dir = root.split("/")[-2]
-        if pre_last_dir not in parents_id.keys():
+    for root, dirs, files in os.walk(src_full_path, topdown=True):
+        # Modify dirs in-place to skip ignored directories
+        dirs[:] = [d for d in dirs if d not in ignore_dirs]
+
+        last_dir = os.path.basename(root)
+        pre_last_dir = os.path.basename(os.path.dirname(root))
+        if pre_last_dir not in parents_id:
             pre_last_dir = target_parents_id
         else:
             pre_last_dir = parents_id[pre_last_dir]
@@ -82,7 +84,7 @@ def folder_upload(src_full_path, target_parents_id, drive: GoogleDrive):
                 file_metadata = {
                     "title": name,
                     "parents": [{"id": folder_id}],
-                    "mimeType": mimetypes.MimeTypes().guess_type(name)[0],
+                    "mimeType": mimetypes.MimeTypes().guess_type(name)[0] or "application/octet-stream",
                 }
                 executor.submit(file_upload, file_metadata, os.path.join(root, name), drive)
 
@@ -91,19 +93,9 @@ def folder_upload(src_full_path, target_parents_id, drive: GoogleDrive):
     return parents_id
 
 
-def check_upload(src_full_path: str, dest_dir: str, drive: GoogleDrive) -> str:
-    """Checks if folder is already uploaded,
-    and if it's not, uploads it.
+def get_dest_dir_id(dest_dir, drive: GoogleDrive) -> str:
 
-    Args:
-        service: Google Drive service instance.
-
-    Returns:
-        ID of uploaded folder, full path to this folder on computer.
-
-    """
-
-    target_parents_id = "root"
+    dest_dir_id = "root"
 
     if dest_dir != "gdrive:":
         dest_folder_list = dest_dir.split(":")[1].rstrip(os.path.sep).split(os.path.sep)
@@ -122,19 +114,28 @@ def check_upload(src_full_path: str, dest_dir: str, drive: GoogleDrive) -> str:
                 else:
                     new_folder_id = create_empty_folder(dest, dest_parents_id[-1], drive)
             dest_parents_id.append(new_folder_id)
-        target_parents_id = dest_parents_id[-1]
+        dest_dir_id = dest_parents_id[-1]
+    return dest_dir_id
+
+
+def check_upload(src_full_path: str, dest_dir_id: str, drive: GoogleDrive) -> str:
+    """Checks if folder is already uploaded,
+    and if it's not, uploads it.
+
+    Args:
+        service: Google Drive service instance.
+
+    Returns:
+        ID of uploaded folder, full path to this folder on computer.
+
+    """
 
     folder_name = src_full_path.split(os.path.sep)[-1]
-    items = list_folders(target_parents_id, drive)
+    items = list_folders(dest_dir_id, drive)
     if folder_name in [item["title"] for item in items]:
         folder_id = [item["id"] for item in items if item["title"] == folder_name][0]
-    else:
-        print(f"{dest_dir}{folder_name} does not exist. Uploading folder to gdrive...")
-        parents_id = folder_upload(src_full_path, target_parents_id, drive)
-        folder_id = parents_id[folder_name]
-        print("Upload completed.")
-
-    return folder_id
+        return folder_id
+    return None
 
 
 def get_tree(folder_name, tree_list, root, parents_id, drive: GoogleDrive):
@@ -178,16 +179,24 @@ def by_lines(input_str):
     return input_str.count(os.path.sep)
 
 
-def push(src_full_path, dest_dir):
+def push(src_full_path, dest_dir, ignore_dirs):
     """Push files to google drive"""
     drive = load_authorized_gdrive()
     dest_dir = dest_dir.rstrip("/")
 
     print("Push started.")
+    if ignore_dirs:
+        print(f"Ignoring dirs: {','.join(ignore_dirs)}")
     # Get id of Google Drive folder and it's path (from other script)
     # folder_id, full_path = initial_upload.check_upload(service)
-    folder_id = check_upload(src_full_path, dest_dir, drive)
     folder_name = src_full_path.split(os.path.sep)[-1]
+    dest_dir_id = get_dest_dir_id(dest_dir, drive)
+    folder_id = check_upload(src_full_path, dest_dir_id, drive)
+    if folder_id is None:
+        print(f"{dest_dir}{folder_name} does not exist. Uploading folder to gdrive...")
+        parents_id = new_folder_upload(src_full_path, dest_dir_id, drive, ignore_dirs)
+        folder_id = parents_id[folder_name]
+        print("Upload completed.")
     tree_list = []
     root = ""
     parents_id = {}
@@ -200,6 +209,10 @@ def push(src_full_path, dest_dir):
 
     # Get list of folders three paths on computer
     for root, dirs, files in os.walk(src_full_path, topdown=True):
+
+        for dir in ignore_dirs:
+            dirs[:] = [d for d in dirs if dir not in d.split(os.path.sep)]
+
         for name in dirs:
             var_path = (os.path.sep).join(root.split(os.path.sep)[root_len + 1 :])
             os_tree_list.append(os.path.join(var_path, name))
