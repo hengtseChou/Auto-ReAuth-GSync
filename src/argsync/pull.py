@@ -26,8 +26,16 @@ GOOGLE_MIME_TYPES = {
 
 
 def list_folders(parents_id, drive: GoogleDrive):
+
     return drive.ListFile(
         {"q": f"'{parents_id}' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'"}
+    ).GetList()
+
+
+def list_files(parents_id, drive: GoogleDrive):
+
+    return drive.ListFile(
+        {"q": f"'{parents_id}' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'"}
     ).GetList()
 
 
@@ -53,6 +61,45 @@ def get_target_folder_id(src_full_path: str, drive: GoogleDrive) -> str:
                 return None
         src_parents_id.append(new_folder_id)
     return src_parents_id[-1]
+
+
+def file_download(args):
+    """Downloads file from Google Drive.
+
+    If file is Google Doc's type, then it will be downloaded
+    with the corresponding non-Google mimetype.
+
+    Args:
+        path: Directory string, where file will be saved.
+        file: File information object (dictionary), including it's name, ID
+        and mimeType.
+        service: Google Drive service instance.
+    """
+    file_dir, drive_file, drive = args
+    file_id = drive_file["id"]
+    file_name = drive_file["title"]
+
+    file = drive.CreateFile({"id": file_id})
+
+    if drive_file["mimeType"] in GOOGLE_MIME_TYPES.keys():
+        if file_name.endswith(GOOGLE_MIME_TYPES[drive_file["mimeType"]][1]):
+            file_name = drive_file["title"]
+        else:
+            file_name = "{}{}".format(drive_file["title"], GOOGLE_MIME_TYPES[drive_file["mimeType"]][1])
+            file["title"] = file_name
+        file["mimeType"] = GOOGLE_MIME_TYPES[drive_file["mimeType"]][0]
+
+    file.GetContentFile(os.path.join(file_dir, file_name))
+
+
+def progress_bar_with_threading_executor(fn, iterable, desc):
+
+    disable_pbar = len(iterable) == 0
+
+    with tqdm.tqdm(total=len(iterable), desc=desc, disable=disable_pbar) as progress:
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            for _ in executor.map(fn, iterable):
+                progress.update()
 
 
 def get_tree(folder_name, tree_list, root, parents_id, drive: GoogleDrive):
@@ -87,34 +134,6 @@ def get_tree(folder_name, tree_list, root, parents_id, drive: GoogleDrive):
         get_tree(folder_name, tree_list, root, parents_id, drive)
 
 
-def download_file_from_gdrive(file_dir, drive_file, drive: GoogleDrive):
-    """Downloads file from Google Drive.
-
-    If file is Google Doc's type, then it will be downloaded
-    with the corresponding non-Google mimetype.
-
-    Args:
-        path: Directory string, where file will be saved.
-        file: File information object (dictionary), including it's name, ID
-        and mimeType.
-        service: Google Drive service instance.
-    """
-    file_id = drive_file["id"]
-    file_name = drive_file["title"]
-
-    file_download = drive.CreateFile({"id": file_id})
-
-    if drive_file["mimeType"] in GOOGLE_MIME_TYPES.keys():
-        if file_name.endswith(GOOGLE_MIME_TYPES[drive_file["mimeType"]][1]):
-            file_name = drive_file["title"]
-        else:
-            file_name = "{}{}".format(drive_file["title"], GOOGLE_MIME_TYPES[drive_file["mimeType"]][1])
-            file_download["title"] = file_name
-        file_download["mimeType"] = GOOGLE_MIME_TYPES[drive_file["mimeType"]][0]
-
-    file_download.GetContentFile(os.path.join(file_dir, file_name))
-
-
 def by_lines(input_str):
     """Helps Sort items by the number of slashes in it.
 
@@ -145,7 +164,7 @@ def pull(src_full_path, dest_dir):
     print("Comparing gdrive to local stroage...")
     parents_id[folder_name] = folder_id
     get_tree(folder_name, tree_list, root, parents_id, drive)
-    os_tree_list = []
+    local_tree_list = []
     dest_full_path = os.path.join(dest_dir, folder_name)
     root_len = len(dest_full_path.split(os.path.sep)[0:-2])
 
@@ -153,14 +172,14 @@ def pull(src_full_path, dest_dir):
     for root, dirs, files in os.walk(dest_full_path, topdown=True):
         for name in dirs:
             var_path = (os.path.sep).join(root.split(os.path.sep)[root_len + 1 :])
-            os_tree_list.append(os.path.join(var_path, name))
+            local_tree_list.append(os.path.join(var_path, name))
 
     # old folders on computer
-    download_folders = list(set(tree_list).difference(set(os_tree_list)))
+    download_folders = list(set(tree_list).difference(set(local_tree_list)))
     # new folders on computer, which you dont have(i suppose heh)
-    remove_folders = list(set(os_tree_list).difference(set(tree_list)))
+    remove_folders = list(set(local_tree_list).difference(set(tree_list)))
     # foldes that match
-    exact_folders = list(set(os_tree_list).intersection(set(tree_list)))
+    exact_folders = list(set(local_tree_list).intersection(set(tree_list)))
 
     exact_folders.append(folder_name)
 
@@ -169,58 +188,61 @@ def pull(src_full_path, dest_dir):
     # Download folders from Drive
     download_folders = sorted(download_folders, key=by_lines)
 
-    print("Downloading new folders...")
-    for folder_dir in tqdm.tqdm(download_folders, disable=(len(download_folders) == 0)):
+    for folder_dir in download_folders:
+
         folder = parent_folder + folder_dir
         last_dir = folder_dir.split(os.path.sep)[-1]
 
         folder_id = parents_id[last_dir]
-        items = drive.ListFile({"q": f"'{folder_id}' in parents and trashed = false"}).GetList()
-        os.mkdir(folder)
-        files = [f for f in items if f["mimeType"] != "application/vnd.google-apps.folder"]
+        os.makedirs(folder)
+        print(f"Created new folder {folder}")
+        files = list_files(folder_id, drive)
 
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            for drive_file in files:
-                executor.submit(download_file_from_gdrive, folder, drive_file, drive)
+        download_tasks = []
+        for drive_file in files:
+            download_tasks.append((folder, drive_file, drive))
+        progress_bar_with_threading_executor(file_download, download_tasks, f"Downloading files to {folder}")
 
     # Check and refresh files in existing folders
-    print("Updating existing folders...")
-    for folder_dir in tqdm.tqdm(exact_folders, disable=(len(exact_folders) == 0)):
+    for folder_dir in exact_folders:
 
         folder = parent_folder + folder_dir
         last_dir = folder_dir.split(os.path.sep)[-1]
-        os_files = [f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
+        local_files = [f for f in os.listdir(folder) if os.path.isfile(os.path.join(folder, f))]
         folder_id = parents_id[last_dir]
 
-        items = list_folders(folder_id, drive)
+        items = list_files(folder_id, drive)
 
-        upload_files = [f for f in items if f["title"] not in os_files]
-        refresh_files = [f for f in items if f["title"] in os_files]
-        remove_files = [f for f in os_files if f not in [i["title"] for i in items]]
+        download_files = [f for f in items if f["title"] not in local_files]
+        update_files = [f for f in items if f["title"] in local_files]
+        remove_files = [f for f in local_files if f not in [i["title"] for i in items]]
 
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            for drive_file in upload_files:
-                executor.submit(download_file_from_gdrive, folder, drive_file, drive)
+        download_tasks = []
+        for drive_file in download_files:
+            download_tasks.append((folder, drive_file, drive))
+        progress_bar_with_threading_executor(file_download, download_tasks, f"Downloading files to {folder}")
 
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            for drive_file in refresh_files:
-                file_dir = os.path.join(folder, drive_file["title"])
+        update_tasks = []
+        for drive_file in update_files:
 
-                drive_md5 = drive_file["md5Checksum"]
-                os_file_md5 = hashlib.md5(open(file_dir, "rb").read()).hexdigest()
+            file_dir = os.path.join(folder, drive_file["title"])
+            drive_md5 = drive_file["md5Checksum"]
+            os_file_md5 = hashlib.md5(open(file_dir, "rb").read()).hexdigest()
 
-                if drive_md5 != os_file_md5:
-                    os.remove(os.path.join(folder, drive_file["title"]))
-                    executor.submit(download_file_from_gdrive, folder, drive_file, drive)
+            if drive_md5 != os_file_md5:
+                os.remove(os.path.join(folder, drive_file["title"]))
+                update_tasks.append((folder, drive_file, drive))
+        progress_bar_with_threading_executor(file_download, update_tasks, f"Downloading files to {folder}")
 
-        for os_file in remove_files:
-            os.remove(os.path.join(folder, os_file))
+        for local_file in tqdm.tqdm(
+            remove_files, disable=(len(remove_files) == 0), desc=f"Removing files from {folder}"
+        ):
+            os.remove(os.path.join(folder, local_file))
 
     # Delete old and unwanted folders from computer
     remove_folders = sorted(remove_folders, key=by_lines, reverse=True)
 
-    print("Deleting unwanted folders...")
-    for folder_dir in tqdm.tqdm(remove_folders, disable=(len(remove_folders) == 0)):
+    for folder_dir in tqdm.tqdm(remove_folders, disable=(len(remove_folders) == 0), desc=f"Deleting unwanted folders"):
         folder = parent_folder + folder_dir
         last_dir = folder_dir.split(os.path.sep)[-1]
         shutil.rmtree(folder)
