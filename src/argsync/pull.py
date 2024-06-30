@@ -190,8 +190,6 @@ def pull(src_full_path: str, dest_dir: str) -> None:
     folder_id = get_target_folder_id(src_full_path, drive)
     if folder_id is None:
         raise click.BadParameter(f"{src_full_path} cannot be found.")
-    if not os.path.exists(dest_dir) and os.path.isdir(dest_dir):
-        raise click.BadParameter(f"{dest_dir} is not a valid directory.")
     folder_name = src_full_path.split(":")[1].rstrip("/").split("/")[-1]
     if not os.path.exists(os.path.join(dest_dir, folder_name)):
         os.mkdir(os.path.join(dest_dir, folder_name))

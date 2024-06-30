@@ -22,13 +22,22 @@ def cli():
 
 @cli.command()
 @click.argument("src", type=click.Path(exists=True))
-@click.option("-d", "--dest", default=None, help="Push into this gdrive folder.")
+@click.option(
+    "-d", "--dest", default=None, help="Push into this gdrive folder. Should be formatted as gdrive:path/to/folder."
+)
 @click.option("-i", "--ignore", multiple=True, help="Set the dirs to ignore when pushing.")
 def push(src, dest, ignore):
-    """Push to gdrive folder."""
+    """Push to gdrive folder.
+
+    SRC: Absolute path to the source dir.
+    """
     settings_path = pathlib.Path(__file__).parent / "settings.yaml"
     if not os.path.exists(settings_path):
         raise click.ClickException("Google Drive API not setup. Please run `argsync setup` to resolve it.")
+    if not (os.path.exists(src) and os.path.isdir(src)):
+        raise click.BadParameter(f"{src} is not a valid directory.")
+    if not os.path.isabs(src):
+        raise click.BadParameter("SRC must be an absolute path.")
     if dest is None:
         dest = "gdrive:"
     if not is_valid_gdrive_path(dest):
@@ -38,9 +47,18 @@ def push(src, dest, ignore):
 
 @cli.command()
 @click.argument("src")
-@click.option("-d", "--dest", default=None, type=click.Path(exists=True), help="Pull folder to this directory.")
+@click.option(
+    "-d",
+    "--dest",
+    default=None,
+    type=click.Path(exists=True),
+    help="Pull folder to this directory. Must be an absolute path.",
+)
 def pull(src, dest):
-    """Pull from gdrive folder."""
+    """Pull from gdrive folder.
+
+    SRC: A path to gdrive folder, formatted as gdrive:path/to/folder.
+    """
     settings_path = pathlib.Path(__file__).parent / "settings.yaml"
     if not os.path.exists(settings_path):
         raise click.ClickException("Google Drive API not setup. Please run `argsync setup` to resolve it.")
@@ -48,6 +66,10 @@ def pull(src, dest):
         raise click.BadParameter("The path to Google Drive folder should be like `gdrive:path/to/folder`.")
     if dest is None:
         dest = os.path.expanduser("~")
+    if not (os.path.exists(dest) and os.path.isdir(dest)):
+        raise click.BadParameter(f"{dest} is not a valid directory.")
+    if not os.path.isabs(dest):
+        raise click.BadParameter("DEST must be an absolute path.")
     pulling(src, dest)
 
 
