@@ -2,10 +2,11 @@ import hashlib
 import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor
+from typing import Callable, Iterable, List, Tuple
 
 import click
 import tqdm
-from pydrive2.drive import GoogleDrive
+from pydrive2.drive import GoogleDrive, GoogleDriveFile
 
 from argsync.gdrive import load_authorized_gdrive
 
@@ -25,22 +26,49 @@ GOOGLE_MIME_TYPES = {
 }
 
 
-def list_folders(parents_id, drive: GoogleDrive):
+def list_folders(parents_id: str, drive: GoogleDrive) -> List[GoogleDriveFile]:
+    """
+    Lists all folders in the specified Google Drive directory.
 
+    Args:
+        parents_id (str): The ID of the parent directory in Google Drive.
+        drive (GoogleDrive): An instance of the GoogleDrive class.
+
+    Returns:
+        list: A list of Google Drive file objects representing folders.
+    """
     return drive.ListFile(
         {"q": f"'{parents_id}' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'"}
     ).GetList()
 
 
-def list_files(parents_id, drive: GoogleDrive):
+def list_files(parents_id: str, drive: GoogleDrive) -> List[GoogleDriveFile]:
+    """
+    Lists all files in the specified Google Drive directory excluding folders.
 
+    Args:
+        parents_id (str): The ID of the parent directory in Google Drive.
+        drive (GoogleDrive): An instance of the GoogleDrive class.
+
+    Returns:
+        list: A list of Google Drive file objects representing files.
+    """
     return drive.ListFile(
         {"q": f"'{parents_id}' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'"}
     ).GetList()
 
 
 def get_target_folder_id(src_full_path: str, drive: GoogleDrive) -> str:
+    """
+    Retrieves the Google Drive folder ID based on the given path.
 
+    Args:
+        src_full_path (str): The full path in Google Drive, formatted as 'gdrive:path/to/folder'.
+        drive (GoogleDrive): An instance of the GoogleDrive class.
+
+    Returns:
+        str or None: The folder ID if found, otherwise None.
+    """
     if src_full_path == "gdrive:":
         return "root"
 
@@ -63,17 +91,12 @@ def get_target_folder_id(src_full_path: str, drive: GoogleDrive) -> str:
     return src_parents_id[-1]
 
 
-def file_download(args):
-    """Downloads file from Google Drive.
-
-    If file is Google Doc's type, then it will be downloaded
-    with the corresponding non-Google mimetype.
+def file_download(args: Tuple[str, GoogleDriveFile, GoogleDrive]) -> None:
+    """
+    Downloads a file from Google Drive and handles different types based on their MIME type.
 
     Args:
-        path: Directory string, where file will be saved.
-        file: File information object (dictionary), including it's name, ID
-        and mimeType.
-        service: Google Drive service instance.
+        args (tuple): A tuple containing the path where the file will be saved, the file information, and the Google Drive service instance.
     """
     file_dir, drive_file, drive = args
     file_id = drive_file["id"]
@@ -92,8 +115,15 @@ def file_download(args):
     file.GetContentFile(os.path.join(file_dir, file_name))
 
 
-def progress_bar_with_threading_executor(fn, iterable, desc):
+def progress_bar_with_threading_executor(fn: Callable, iterable: Iterable[Tuple], desc: str) -> None:
+    """
+    Executes a function over an iterable with a progress bar, using multiple threads.
 
+    Args:
+        fn (function): The function to apply to each item in the iterable.
+        iterable (iterable): An iterable where each item will be processed by the function.
+        desc (str): Description text for the progress bar.
+    """
     disable_pbar = len(iterable) == 0
 
     with tqdm.tqdm(total=len(iterable), desc=desc, disable=disable_pbar) as progress:
@@ -102,25 +132,19 @@ def progress_bar_with_threading_executor(fn, iterable, desc):
                 progress.update()
 
 
-def get_tree(folder_name, tree_list, root, parents_id, drive: GoogleDrive):
-    """Gets folder tree relative paths.
-
-    Recursively gets through subfolders, remembers their names ad ID's.
+def get_tree(folder_name: str, tree_list: List[str], root: str, parents_id: str, drive: GoogleDrive) -> None:
+    """
+    Recursively builds a list of all folder paths under a specified Google Drive folder.
 
     Args:
-        folder_name: Name of folder, initially
-        name of parent folder string.
-        folder_id: ID of folder, initially ID of parent folder.
-        tree_list: List of relative folder paths, initially
-        empy list.
-        root: Current relative folder path, initially empty string.
-        parents_id: Dictionary with pairs of {key:value} like
-        {folder's name: folder's Drive ID}, initially empty dict.
-        service: Google Drive service instance.
+        folder_name (str): The name of the starting folder.
+        tree_list (list): Accumulator for storing folder paths.
+        root (str): Current path prefix.
+        parents_id (dict): A dictionary mapping folder names to their Google Drive IDs.
+        drive (GoogleDrive): An instance of the GoogleDrive class.
 
     Returns:
-        List of folder tree relative folder paths.
-
+        None. It will modify tree_list that was passed in.
     """
     folder_id = parents_id[folder_name]
     items = list_folders(folder_id, drive)
@@ -134,18 +158,30 @@ def get_tree(folder_name, tree_list, root, parents_id, drive: GoogleDrive):
         get_tree(folder_name, tree_list, root, parents_id, drive)
 
 
-def by_lines(input_str):
-    """Helps Sort items by the number of slashes in it.
+def by_lines(input_str: str) -> int:
+    """
+    Returns the count of slashes in a string, used for sorting paths.
+
+    Args:
+        input_str (str): The string to count slashes in.
 
     Returns:
-        Number of slashes in string.
+        int: The number of slashes in the input string.
     """
     return input_str.count(os.path.sep)
 
 
-def pull(src_full_path, dest_dir):
-    """Pull files from Google Drive."""
-    # credentials = get_credentials()
+def pull(src_full_path: str, dest_dir: str) -> None:
+    """
+    Synchronizes a local directory with the contents of a Google Drive directory.
+
+    Args:
+        src_full_path (str): The Google Drive path to synchronize, formatted as 'gdrive:path/to/directory'.
+        dest_dir (str): The local directory path where files will be synchronized to.
+
+    Raises:
+        click.BadParameter: If the specified paths are not valid or not found.
+    """
     drive = load_authorized_gdrive()
 
     # Get id of Google Drive folder and it's path (from other script)

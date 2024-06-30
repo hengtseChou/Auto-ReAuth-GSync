@@ -2,29 +2,58 @@ import hashlib
 import mimetypes
 import os
 from concurrent.futures import ThreadPoolExecutor
+from typing import Callable, Dict, Iterable, List, Tuple
 
 import tqdm
-from pydrive2.drive import GoogleDrive
+from pydrive2.drive import GoogleDrive, GoogleDriveFile
 
 from argsync.gdrive import load_authorized_gdrive
 
 
-def list_folders(parents_id, drive: GoogleDrive):
+def list_folders(parents_id: str, drive: GoogleDrive) -> List[GoogleDriveFile]:
+    """
+    Lists all folders in the specified Google Drive directory.
 
+    Args:
+        parents_id (str): The ID of the parent directory in Google Drive.
+        drive (GoogleDrive): An instance of the GoogleDrive class.
+
+    Returns:
+        list: A list of Google Drive file objects representing folders.
+    """
     return drive.ListFile(
         {"q": f"'{parents_id}' in parents and trashed = false and mimeType = 'application/vnd.google-apps.folder'"}
     ).GetList()
 
 
-def list_files(parents_id, drive: GoogleDrive):
+def list_files(parents_id: str, drive: GoogleDrive) -> List[GoogleDriveFile]:
+    """
+    Lists all files in the specified Google Drive directory excluding folders.
 
+    Args:
+        parents_id (str): The ID of the parent directory in Google Drive.
+        drive (GoogleDrive): An instance of the GoogleDrive class.
+
+    Returns:
+        list: A list of Google Drive file objects representing files.
+    """
     return drive.ListFile(
         {"q": f"'{parents_id}' in parents and trashed = false and mimeType != 'application/vnd.google-apps.folder'"}
     ).GetList()
 
 
-def create_empty_folder(folder_name, parents_id, drive: GoogleDrive):
+def create_empty_folder(folder_name: str, parents_id: str, drive: GoogleDrive) -> str:
+    """
+    Creates a new folder in Google Drive under a specified parent directory.
 
+    Args:
+        folder_name (str): The name of the folder to create.
+        parents_id (str): The ID of the parent directory under which the folder will be created.
+        drive (GoogleDrive): An instance of the GoogleDrive class.
+
+    Returns:
+        str: The ID of the newly created folder.
+    """
     folder_metadata = {
         "title": folder_name,
         "parents": [{"id": parents_id}],
@@ -38,18 +67,21 @@ def create_empty_folder(folder_name, parents_id, drive: GoogleDrive):
     return folder_id
 
 
-def new_folder_upload(src_full_path, target_parents_id, drive: GoogleDrive, ignore_dirs):
-    """Uploads folder and all it's content (if it doesnt exists)
+def new_folder_upload(
+    src_full_path: str, target_parents_id: str, drive: GoogleDrive, ignore_dirs: Tuple[str]
+) -> Dict[str, str]:
+    """
+    Recursively uploads a folder and its content to Google Drive if it does not already exist.
 
     Args:
-        items: List of folders in root path on Google Drive.
-        service: Google Drive service instance.
+        src_full_path (str): The local path of the source folder to upload.
+        target_parents_id (str): The ID of the target parent folder on Google Drive.
+        drive (GoogleDrive): An instance of the GoogleDrive class.
+        ignore_dirs (list): A list of directory names to ignore during upload.
 
     Returns:
-        Dictionary, where keys are folder's names
-        and values are id's of these folders.
+        dict: A dictionary mapping folder names to their corresponding Google Drive folder IDs.
     """
-
     parents_id = {}
 
     for root, dirs, files in os.walk(src_full_path, topdown=True):
@@ -80,8 +112,17 @@ def new_folder_upload(src_full_path, target_parents_id, drive: GoogleDrive, igno
     return parents_id
 
 
-def get_dest_dir_id(dest_dir, drive: GoogleDrive) -> str:
+def get_dest_dir_id(dest_dir: str, drive: GoogleDrive) -> str:
+    """
+    Determines the Google Drive folder ID for a specified path, creating folders as needed.
 
+    Args:
+        dest_dir (str): The Google Drive path where the folders should be checked or created.
+        drive (GoogleDrive): An instance of the GoogleDrive class.
+
+    Returns:
+        str: The Google Drive folder ID corresponding to the specified path.
+    """
     dest_dir_id = "root"
 
     if dest_dir != "gdrive:":
@@ -112,15 +153,16 @@ def get_dest_dir_id(dest_dir, drive: GoogleDrive) -> str:
 
 
 def check_upload(src_full_path: str, dest_dir_id: str, drive: GoogleDrive) -> str:
-    """Checks if folder is already uploaded,
-    and if it's not, uploads it.
+    """
+    Checks if a folder is already uploaded to Google Drive and uploads it if not.
 
     Args:
-        service: Google Drive service instance.
+        src_full_path (str): The path of the source folder on the local system.
+        dest_dir_id (str): The ID of the destination directory on Google Drive.
+        drive (GoogleDrive): An instance of the GoogleDrive class.
 
     Returns:
-        ID of uploaded folder, full path to this folder on computer.
-
+        str: The ID of the uploaded folder.
     """
     folder_name = src_full_path.split(os.path.sep)[-1]
     items = list_folders(dest_dir_id, drive)
@@ -130,11 +172,12 @@ def check_upload(src_full_path: str, dest_dir_id: str, drive: GoogleDrive) -> st
     return None
 
 
-def file_upload(args):
-    """Upload a file to Google Drive using provided arguments packed as a tuple.
+def file_upload(args: Tuple[Dict, str, GoogleDrive]) -> None:
+    """
+    Uploads a file to Google Drive.
 
     Args:
-        args (tuple): A tuple containing file_metadata, file_path, and drive object.
+        args (tuple): Contains file metadata, the path of the file to upload, and the Google Drive instance.
     """
     file_metadata, file_path, drive = args
     file = drive.CreateFile(file_metadata)
@@ -143,19 +186,27 @@ def file_upload(args):
     return file_path
 
 
-def file_trash(args):
-    """Trashing a file from Google Drive using provided arguments packed as a tuple.
+def file_trash(args: Tuple[str, GoogleDrive]) -> None:
+    """
+    Moves a file to the trash in Google Drive.
 
     Args:
-        args (tuple): A tuple containing file_id, and drive object.
+        args (tuple): Contains the ID of the file to trash and the Google Drive instance.
     """
     file_id, drive = args
     file = drive.CreateFile({"id": file_id})
     file.Trash()
 
 
-def progress_bar_with_threading_executor(fn, iterable, desc):
+def progress_bar_with_threading_executor(fn: Callable, iterable: Tuple, desc: str) -> None:
+    """
+    Executes a function over an iterable with a progress bar, using multiple threads.
 
+    Args:
+        fn (function): The function to apply to each item in the iterable.
+        iterable (iterable): An iterable where each item will be processed by the function.
+        desc (str): Description text for the progress bar.
+    """
     disable_pbar = len(iterable) == 0
 
     with tqdm.tqdm(total=len(iterable), desc=desc, disable=disable_pbar) as progress:
@@ -164,25 +215,19 @@ def progress_bar_with_threading_executor(fn, iterable, desc):
                 progress.update()
 
 
-def get_tree(folder_name, tree_list, root, parents_id, drive: GoogleDrive):
-    """Gets folder tree relative paths.
-
-    Recursively gets through subfolders, remembers their names ad ID's.
+def get_tree(folder_name: str, tree_list: List[str], root: str, parents_id: str, drive: GoogleDrive) -> None:
+    """
+    Recursively builds a list of all folder paths under a specified Google Drive folder.
 
     Args:
-        folder_name: Name of folder, initially
-        name of parent folder string.
-        folder_id: ID of folder, initially ID of parent folder.
-        tree_list: List of relative folder paths, initially
-        empy list.
-        root: Current relative folder path, initially empty string.
-        parents_id: Dictionary with pairs of {key:value} like
-        {folder's name: folder's Drive ID}, initially empty dict.
-        service: Google Drive service instance.
+        folder_name (str): The name of the starting folder.
+        tree_list (list): Accumulator for storing folder paths.
+        root (str): Current path prefix.
+        parents_id (dict): A dictionary mapping folder names to their Google Drive IDs.
+        drive (GoogleDrive): An instance of the GoogleDrive class.
 
     Returns:
-        List of folder tree relative folder paths.
-
+        None. It will modify tree_list that was passed in.
     """
     folder_id = parents_id[folder_name]
     items = list_folders(folder_id, drive)
@@ -196,17 +241,31 @@ def get_tree(folder_name, tree_list, root, parents_id, drive: GoogleDrive):
         get_tree(folder_name, tree_list, root, parents_id, drive)
 
 
-def by_lines(input_str):
-    """Helps Sort items by the number of slashes in it.
+def by_lines(input_str: str) -> int:
+    """
+    Returns the count of slashes in a string, used for sorting paths.
+
+    Args:
+        input_str (str): The string to count slashes in.
 
     Returns:
-        Number of slashes in string.
+        int: The number of slashes in the input string.
     """
     return input_str.count(os.path.sep)
 
 
-def push(src_full_path, dest_dir, ignore_dirs):
-    """Push files to google drive"""
+def push(src_full_path: str, dest_dir: str, ignore_dirs: Tuple[str]) -> None:
+    """
+    Pushes local files to Google Drive, creating folders and uploading files as necessary.
+
+    Args:
+        src_full_path (str): The local path to push from.
+        dest_dir (str): The destination directory path on Google Drive.
+        ignore_dirs (list): A list of directories to ignore during the push.
+
+    Returns:
+        None
+    """
     drive = load_authorized_gdrive()
     dest_dir = dest_dir.rstrip("/")
 
