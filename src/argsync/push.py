@@ -69,8 +69,8 @@ def create_empty_folder(folder_name: str, parents_id: str, drive: GoogleDrive) -
 
 
 def new_folder_upload(
-    src_full_path: str, target_parents_id: str, drive: GoogleDrive, ignore_dirs: Tuple[str]
-) -> Dict[str, str]:
+    src_full_path: str, target_parents_id: str, drive: GoogleDrive, ignore_dirs: Tuple[str], num_of_uploader: int
+) -> None:
     """
     Recursively uploads a folder and its content to Google Drive if it does not already exist.
 
@@ -79,9 +79,6 @@ def new_folder_upload(
         target_parents_id (str): The ID of the target parent folder on Google Drive.
         drive (GoogleDrive): An instance of the GoogleDrive class.
         ignore_dirs (list): A list of directory names to ignore during upload.
-
-    Returns:
-        dict: A dictionary mapping folder names to their corresponding Google Drive folder IDs.
     """
     parents_id = {}
 
@@ -89,28 +86,26 @@ def new_folder_upload(
         # Modify dirs in-place to skip ignored directories
         dirs[:] = [d for d in dirs if d not in ignore_dirs]
 
-        last_dir = os.path.basename(root)
-        pre_last_dir = os.path.basename(os.path.dirname(root))
-        if pre_last_dir not in parents_id:
+        last_dir = pathlib.Path(root)
+        pre_last_dir = pathlib.Path(root).parent
+        if str(pre_last_dir) not in parents_id:
             pre_last_dir = target_parents_id
         else:
-            pre_last_dir = parents_id[pre_last_dir]
+            pre_last_dir = parents_id[str(pre_last_dir)]
 
-        folder_id = create_empty_folder(last_dir, pre_last_dir, drive)
+        folder_id = create_empty_folder(last_dir.name, str(pre_last_dir), drive)
 
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        upload_tasks = []
+        for name in files:
+            file_metadata = {
+                "title": name,
+                "parents": [{"id": folder_id}],
+                "mimeType": mimetypes.MimeTypes().guess_type(name)[0] or "application/octet-stream",
+            }
+            upload_tasks.append((file_metadata, os.path.join(root, name), drive))
+        progress_bar_with_threading_executor(file_upload, upload_tasks, f"Uploading files from {root}", num_of_uploader)
 
-            for name in files:
-                file_metadata = {
-                    "title": name,
-                    "parents": [{"id": folder_id}],
-                    "mimeType": mimetypes.MimeTypes().guess_type(name)[0] or "application/octet-stream",
-                }
-                executor.submit(file_upload, file_metadata, os.path.join(root, name), drive)
-
-        parents_id[last_dir] = folder_id
-
-    return parents_id
+        parents_id[str(last_dir)] = folder_id
 
 
 def get_dest_dir_id(dest_dir: str, drive: GoogleDrive) -> str:
@@ -199,7 +194,7 @@ def file_trash(args: Tuple[str, GoogleDrive]) -> None:
     file.Trash()
 
 
-def progress_bar_with_threading_executor(fn: Callable, iterable: Tuple, desc: str) -> None:
+def progress_bar_with_threading_executor(fn: Callable, iterable: Tuple, desc: str, num_of_uploader: int) -> None:
     """
     Executes a function over an iterable with a progress bar, using multiple threads.
 
@@ -211,7 +206,7 @@ def progress_bar_with_threading_executor(fn: Callable, iterable: Tuple, desc: st
     disable_pbar = len(iterable) == 0
 
     with tqdm.tqdm(total=len(iterable), desc=desc, disable=disable_pbar) as progress:
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=num_of_uploader) as executor:
             for _ in executor.map(fn, iterable):
                 progress.update()
 
@@ -255,7 +250,7 @@ def by_lines(input_str: str) -> int:
     return input_str.count(os.path.sep)
 
 
-def push(src_full_path: str, dest_dir: str, ignore_dirs: Tuple[str]) -> None:
+def push(src_full_path: str, dest_dir: str, ignore_dirs: Tuple[str], num_of_uploader: int) -> None:
     """
     Pushes local files to Google Drive, creating folders and uploading files as necessary.
 
@@ -263,6 +258,7 @@ def push(src_full_path: str, dest_dir: str, ignore_dirs: Tuple[str]) -> None:
         src_full_path (str): The local path to push from.
         dest_dir (str): The destination directory path on Google Drive.
         ignore_dirs (list): A list of directories to ignore during the push.
+        num_of_uploader(int): Number of workers in threading executor.
 
     Returns:
         None
@@ -272,7 +268,8 @@ def push(src_full_path: str, dest_dir: str, ignore_dirs: Tuple[str]) -> None:
 
     print("Push started.")
     if ignore_dirs:
-        print(f"Ignoring dirs: {','.join(ignore_dirs)}")
+        print(f"Ignoring dirs: {' '.join(ignore_dirs)}")
+    print(f"Number of uploaders: {num_of_uploader}")
     # Get id of Google Drive folder and it's path (from other script)
     # folder_id, full_path = initial_upload.check_upload(service)
     folder_name = src_full_path.split(os.path.sep)[-1]
@@ -280,10 +277,10 @@ def push(src_full_path: str, dest_dir: str, ignore_dirs: Tuple[str]) -> None:
     folder_id = check_upload(src_full_path, dest_dir_id, drive)
 
     if folder_id is None:
-        print(f"{dest_dir}{folder_name} does not exist. Uploading folder to gdrive...")
-        parents_id = new_folder_upload(src_full_path, dest_dir_id, drive, ignore_dirs)
-        folder_id = parents_id[folder_name]
-        print("Upload completed.")
+        print(f"{os.path.join(dest_dir, folder_name)} does not exist. Uploading folder to gdrive...")
+        new_folder_upload(src_full_path, dest_dir_id, drive, ignore_dirs, num_of_uploader)
+        print("Push completed.")
+        return
 
     tree_list = []
     root = ""
@@ -342,7 +339,9 @@ def push(src_full_path: str, dest_dir: str, ignore_dirs: Tuple[str]) -> None:
                 "mimeType": local_file_mimetype,
             }
             upload_tasks.append((file_metadata, os.path.join(folder, local_file), drive))
-        progress_bar_with_threading_executor(file_upload, upload_tasks, f"Uploading files from {folder}")
+        progress_bar_with_threading_executor(
+            file_upload, upload_tasks, f"Uploading files from {folder}", num_of_uploader
+        )
 
     # Check files in existed folders and replace them
     # with newer versions if needed
@@ -368,7 +367,9 @@ def push(src_full_path: str, dest_dir: str, ignore_dirs: Tuple[str]) -> None:
                 "mimeType": local_file_mimetype,
             }
             upload_tasks.append((file_metadata, os.path.join(folder, local_file), drive))
-        progress_bar_with_threading_executor(file_upload, upload_tasks, f"Uploading files from {folder}")
+        progress_bar_with_threading_executor(
+            file_upload, upload_tasks, f"Uploading files from {folder}", num_of_uploader
+        )
 
         update_tasks = []
         for drive_file in update_files:
@@ -389,13 +390,17 @@ def push(src_full_path: str, dest_dir: str, ignore_dirs: Tuple[str]) -> None:
                     "mimeType": file_mime,
                 }
                 update_tasks.append((file_metadata, file_dir, drive))
-        progress_bar_with_threading_executor(file_upload, update_tasks, f"Updating files from {folder}")
+        progress_bar_with_threading_executor(
+            file_upload, update_tasks, f"Updating files from {folder}", num_of_uploader
+        )
 
         removal_tasks = []
         for drive_file in remove_files:
             file_id = [f["id"] for f in items if f["title"] == drive_file["title"]][0]
             removal_tasks.append((file_id, drive))
-        progress_bar_with_threading_executor(file_trash, removal_tasks, f"Removing files that were in {folder}")
+        progress_bar_with_threading_executor(
+            file_trash, removal_tasks, f"Removing files that were in {folder}", num_of_uploader
+        )
 
     remove_folders = sorted(remove_folders, key=by_lines, reverse=True)
 
@@ -406,5 +411,5 @@ def push(src_full_path: str, dest_dir: str, ignore_dirs: Tuple[str]) -> None:
         last_dir = pathlib.Path(folder_dir)
         folder_id = parents_id[str(last_dir)]
         removal_tasks.append((folder_id, drive))
-    progress_bar_with_threading_executor(file_trash, removal_tasks, "Deleting unwanted folders")
+    progress_bar_with_threading_executor(file_trash, removal_tasks, "Deleting unwanted folders", num_of_uploader)
     print("Push completed.")

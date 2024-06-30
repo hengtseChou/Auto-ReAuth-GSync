@@ -25,8 +25,9 @@ def cli():
 @click.option(
     "-d", "--dest", default=None, help="Push into this gdrive folder. Should be formatted as gdrive:path/to/folder."
 )
+@click.option("-w", "--workers", default=5, type=int, help="Number of workers to upload asynchronously.")
 @click.option("-i", "--ignore", multiple=True, help="Set the dirs to ignore when pushing.")
-def push(src, dest, ignore):
+def push(src, dest, ignore, workers):
     """Push to gdrive folder.
 
     SRC: Absolute path to the source dir.
@@ -42,7 +43,7 @@ def push(src, dest, ignore):
         dest = "gdrive:"
     if not is_valid_gdrive_path(dest):
         raise click.BadParameter("The path to Google Drive folder should be like `gdrive:path/to/folder`.")
-    pushing(src, dest, ignore)
+    pushing(src, dest, ignore, workers)
 
 
 @cli.command()
@@ -54,7 +55,8 @@ def push(src, dest, ignore):
     type=click.Path(exists=True),
     help="Pull folder to this directory. Must be an absolute path.",
 )
-def pull(src, dest):
+@click.option("-w", "--workers", default=5, type=int, help="Number of workers to download asynchronously.")
+def pull(src, dest, workers):
     """Pull from gdrive folder.
 
     SRC: A path to gdrive folder, formatted as gdrive:path/to/folder.
@@ -70,7 +72,7 @@ def pull(src, dest):
         raise click.BadParameter(f"{dest} is not a valid directory.")
     if not os.path.isabs(dest):
         raise click.BadParameter("DEST must be an absolute path.")
-    pulling(src, dest)
+    pulling(src, dest, workers)
 
 
 @cli.command()

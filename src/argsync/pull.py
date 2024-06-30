@@ -116,7 +116,9 @@ def file_download(args: Tuple[str, GoogleDriveFile, GoogleDrive]) -> None:
     file.GetContentFile(os.path.join(file_dir, file_name))
 
 
-def progress_bar_with_threading_executor(fn: Callable, iterable: Iterable[Tuple], desc: str) -> None:
+def progress_bar_with_threading_executor(
+    fn: Callable, iterable: Iterable[Tuple], desc: str, num_of_downloader: int
+) -> None:
     """
     Executes a function over an iterable with a progress bar, using multiple threads.
 
@@ -128,7 +130,7 @@ def progress_bar_with_threading_executor(fn: Callable, iterable: Iterable[Tuple]
     disable_pbar = len(iterable) == 0
 
     with tqdm.tqdm(total=len(iterable), desc=desc, disable=disable_pbar) as progress:
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=num_of_downloader) as executor:
             for _ in executor.map(fn, iterable):
                 progress.update()
 
@@ -172,7 +174,7 @@ def by_lines(input_str: str) -> int:
     return input_str.count(os.path.sep)
 
 
-def pull(src_full_path: str, dest_dir: str) -> None:
+def pull(src_full_path: str, dest_dir: str, num_of_downloader: int) -> None:
     """
     Synchronizes a local directory with the contents of a Google Drive directory.
 
@@ -188,6 +190,7 @@ def pull(src_full_path: str, dest_dir: str) -> None:
     # Get id of Google Drive folder and it's path (from other script)
     # folder_id, full_path = initial_upload.check_upload(service)
     print("Pull started.")
+    print(f"Number of downloaders: {num_of_downloader}")
     folder_id = get_target_folder_id(src_full_path, drive)
     if folder_id is None:
         raise click.BadParameter(f"{src_full_path} cannot be found.")
@@ -235,7 +238,9 @@ def pull(src_full_path: str, dest_dir: str) -> None:
         download_tasks = []
         for drive_file in files:
             download_tasks.append((folder, drive_file, drive))
-        progress_bar_with_threading_executor(file_download, download_tasks, f"Downloading files to {folder}")
+        progress_bar_with_threading_executor(
+            file_download, download_tasks, f"Downloading files to {folder}", num_of_downloader
+        )
 
     # Check and refresh files in existing folders
     for folder_dir in exact_folders:
@@ -254,7 +259,9 @@ def pull(src_full_path: str, dest_dir: str) -> None:
         download_tasks = []
         for drive_file in download_files:
             download_tasks.append((folder, drive_file, drive))
-        progress_bar_with_threading_executor(file_download, download_tasks, f"Downloading files to {folder}")
+        progress_bar_with_threading_executor(
+            file_download, download_tasks, f"Downloading files to {folder}", num_of_downloader
+        )
 
         update_tasks = []
         for drive_file in update_files:
@@ -266,7 +273,9 @@ def pull(src_full_path: str, dest_dir: str) -> None:
             if drive_md5 != os_file_md5:
                 os.remove(os.path.join(folder, drive_file["title"]))
                 update_tasks.append((folder, drive_file, drive))
-        progress_bar_with_threading_executor(file_download, update_tasks, f"Downloading files to {folder}")
+        progress_bar_with_threading_executor(
+            file_download, update_tasks, f"Downloading files to {folder}", num_of_downloader
+        )
 
         for local_file in tqdm.tqdm(
             remove_files, disable=(len(remove_files) == 0), desc=f"Removing files from {folder}"
